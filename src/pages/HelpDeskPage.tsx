@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Check,
+  CheckCheck,
   CheckCircle2,
   LifeBuoy,
   MessageCircle,
@@ -167,10 +169,10 @@ export function HelpDeskPage({
     };
   }, [selectedTicketId]);
 
-  // Load selected DM conversation
+  // Load selected DM conversation only when viewing Direct Messages tab
   useEffect(() => {
-    if (!selectedContactId) {
-      setDmMessages([]);
+    if (activeTab !== 'dm' || !selectedContactId) {
+      if (!selectedContactId) setDmMessages([]);
       return;
     }
     let cancelled = false;
@@ -193,7 +195,7 @@ export function HelpDeskPage({
     return () => {
       cancelled = true;
     };
-  }, [selectedContactId]);
+  }, [activeTab, selectedContactId]);
 
   // Auto-scroll message feeds
   useEffect(() => {
@@ -230,13 +232,17 @@ export function HelpDeskPage({
         if (!msg?.MessageID) return;
         const otherId = msg.FromUserID === user.userId ? msg.ToUserID : msg.FromUserID;
         const viewingThisThread = activeTab === 'dm' && selectedContactId === otherId;
+        const incomingInOpenThread = viewingThisThread && msg.FromUserID === otherId;
 
         if (selectedContactId === otherId) {
-          setDmMessages((prev) => (prev.some((m) => m.MessageID === msg.MessageID) ? prev : [...prev, msg]));
+          const normalizedMsg = incomingInOpenThread ? { ...msg, Read: true } : msg;
+          setDmMessages((prev) =>
+            prev.some((m) => m.MessageID === normalizedMsg.MessageID) ? prev : [...prev, normalizedMsg]
+          );
         }
 
-        if (viewingThisThread && msg.FromUserID === otherId) {
-          api.getDmThread(otherId).catch(() => {});
+        if (incomingInOpenThread) {
+          api.markDmRead(otherId).catch(() => {});
         }
 
         setDmThreads((prev) => {
@@ -247,6 +253,7 @@ export function HelpDeskPage({
               lastMessage: msg.Message,
               lastAt: msg.CreatedAt,
               lastFromMe: msg.FromUserID === user.userId,
+              lastRead: msg.FromUserID === user.userId ? Boolean(msg.Read) : incomingInOpenThread || Boolean(msg.Read),
               unreadCount:
                 msg.FromUserID === otherId && !viewingThisThread ? t.unreadCount + 1 : t.unreadCount,
             };
@@ -259,6 +266,24 @@ export function HelpDeskPage({
             return a.name.localeCompare(b.name);
           });
         });
+      } else if (evt.type === 'dm:read') {
+        const payload = (evt.payload || {}) as { readerId?: string; otherUserId?: string };
+        const readerId = payload.readerId || '';
+        if (!readerId) return;
+
+        if (selectedContactId === readerId) {
+          setDmMessages((prev) =>
+            prev.map((m) =>
+              m.FromUserID === user.userId && m.ToUserID === readerId && !m.Read
+                ? { ...m, Read: true }
+                : m
+            )
+          );
+        }
+
+        setDmThreads((prev) =>
+          prev.map((t) => (t.userId === readerId && t.lastFromMe ? { ...t, lastRead: true } : t))
+        );
       }
     },
     [activeTab, selectedContactId, selectedTicketId, user.userId]
@@ -417,6 +442,7 @@ export function HelpDeskPage({
                 lastMessage: res.message!.Message,
                 lastAt: res.message!.CreatedAt,
                 lastFromMe: true,
+                lastRead: false,
               }
             : t
         )
@@ -780,9 +806,24 @@ export function HelpDeskPage({
                         {c.department ? ` · ${c.department}` : ''}
                       </div>
                       {c.lastMessage && (
-                        <div className="text-xs text-[#574D4D] truncate mt-1">
-                          {c.lastFromMe ? 'You: ' : ''}
-                          {c.lastMessage}
+                        <div className="text-xs text-[#574D4D] truncate mt-1 flex items-center gap-1">
+                          {c.lastFromMe && (
+                            c.lastRead ? (
+                              <CheckCheck
+                                className="h-3.5 w-3.5 text-[#255A2D] shrink-0"
+                                aria-label="Read"
+                              />
+                            ) : (
+                              <Check
+                                className="h-3.5 w-3.5 text-[#7A6F6F] shrink-0"
+                                aria-label="Sent"
+                              />
+                            )
+                          )}
+                          <span className="truncate">
+                            {c.lastFromMe ? 'You: ' : ''}
+                            {c.lastMessage}
+                          </span>
                         </div>
                       )}
                     </button>
@@ -833,8 +874,28 @@ export function HelpDeskPage({
                           >
                             {m.Message}
                           </div>
-                          <div className="text-[10px] text-[#7A6F6F] mt-1 px-1 font-mono-tabular">
-                            {fmtDateTime(m.CreatedAt)}
+                          <div className="text-[10px] text-[#7A6F6F] mt-1 px-1 font-mono-tabular flex items-center gap-1.5">
+                            <span>{fmtDateTime(m.CreatedAt)}</span>
+                            {mine && (
+                              <span
+                                className={`inline-flex items-center gap-0.5 font-sans font-semibold ${
+                                  m.Read ? 'text-[#255A2D]' : 'text-[#7A6F6F]'
+                                }`}
+                                title={m.Read ? 'Viewed by recipient' : 'Delivered to recipient'}
+                              >
+                                {m.Read ? (
+                                  <>
+                                    <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                                    Read
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                                    Sent
+                                  </>
+                                )}
+                              </span>
+                            )}
                           </div>
                         </div>
                       );

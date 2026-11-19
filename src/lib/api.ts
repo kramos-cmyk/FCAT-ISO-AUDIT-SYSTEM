@@ -394,6 +394,10 @@ export const api = {
   listDmThreads: () => request<DmThreadSummary[]>('/helpdesk/dm/threads'),
   getDmThread: (otherUserId: string) =>
     request<DirectMessage[]>(`/helpdesk/dm/${encodeURIComponent(otherUserId)}`),
+  markDmRead: (otherUserId: string) =>
+    request<{ ok: boolean }>(`/helpdesk/dm/${encodeURIComponent(otherUserId)}/read`, {
+      method: 'POST',
+    }),
   sendDirectMessage: (otherUserId: string, message: string) =>
     request<{ ok: boolean; message?: DirectMessage; error?: string }>(
       `/helpdesk/dm/${encodeURIComponent(otherUserId)}`,

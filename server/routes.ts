@@ -1701,6 +1701,7 @@ export function createApiRouter(): express.Router {
           lastMessage: last ? last.Message : '',
           lastAt: last ? last.CreatedAt : '',
           lastFromMe: last ? last.FromUserID === me : false,
+          lastRead: last ? Boolean(last.Read) : false,
           unreadCount,
         };
       });
@@ -1724,15 +1725,37 @@ export function createApiRouter(): express.Router {
       const store = getStore();
       const me = req.user!.userId;
       const other = req.params.otherUserId;
-      await store.markDirectMessagesRead(other, me);
       const all = await store.listDirectMessagesForUser(me);
-      const thread = all.filter(
-        (m) => (m.FromUserID === me && m.ToUserID === other) || (m.FromUserID === other && m.ToUserID === me)
+      const hasUnreadFromOther = all.some(
+        (m) => m.FromUserID === other && m.ToUserID === me && !m.Read
       );
-      emitToUsers([me], { type: 'dm:read', payload: { otherUserId: other } });
+      if (hasUnreadFromOther) {
+        await store.markDirectMessagesRead(other, me);
+      }
+      const thread = all
+        .filter(
+          (m) => (m.FromUserID === me && m.ToUserID === other) || (m.FromUserID === other && m.ToUserID === me)
+        )
+        .map((m) => (m.FromUserID === other && m.ToUserID === me ? { ...m, Read: true } : m));
+      if (hasUnreadFromOther) {
+        emitToUsers([me, other], { type: 'dm:read', payload: { readerId: me, otherUserId: other } });
+      }
       res.json(thread);
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load messages.' });
+    }
+  });
+
+  router.post('/helpdesk/dm/:otherUserId/read', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const store = getStore();
+      const me = req.user!.userId;
+      const other = req.params.otherUserId;
+      await store.markDirectMessagesRead(other, me);
+      emitToUsers([me, other], { type: 'dm:read', payload: { readerId: me, otherUserId: other } });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to mark messages as read.' });
     }
   });
 

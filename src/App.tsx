@@ -150,6 +150,14 @@ function AppInner() {
     await api.confirmDpo().catch(() => {});
   };
 
+  const openHelpDesk = useCallback(
+    (tab: 'tickets' | 'dm', id?: string) => {
+      setHelpDeskTarget({ tab, id });
+      navigate('helpdesk');
+    },
+    [navigate]
+  );
+
   if (!user) {
     return (
       <LoginPage
@@ -184,14 +192,6 @@ function AppInner() {
   }
 
   const returnHome = () => navigate(isAuditorRole(user.role) ? 'admin' : 'employee');
-
-  const openHelpDesk = useCallback(
-    (tab: 'tickets' | 'dm', id?: string) => {
-      setHelpDeskTarget({ tab, id });
-      navigate('helpdesk');
-    },
-    [navigate]
-  );
 
   return (
     <Layout

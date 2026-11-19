@@ -212,5 +212,6 @@ export interface DmThreadSummary {
   lastMessage: string;
   lastAt: string;
   lastFromMe: boolean;
+  lastRead?: boolean;
   unreadCount: number;
 }
