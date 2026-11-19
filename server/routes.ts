@@ -221,6 +221,20 @@ export function createApiRouter(): express.Router {
     res.json({ ok: true });
   });
 
+  router.post('/auth/dpo-confirm', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      await getStore().appendLog({
+        Timestamp: nowIso(),
+        UserID: req.user!.userId,
+        Action: 'DPO_CONFIRMED',
+        Details: 'Privacy, Security, and Accountability Notice acknowledged',
+      });
+      res.json({ ok: true });
+    } catch {
+      res.json({ ok: true });
+    }
+  });
+
   router.get('/auth/me', requireAuth, async (req: AuthedRequest, res) => {
     try {
       // Refresh user info from store so department/role updates take effect immediately

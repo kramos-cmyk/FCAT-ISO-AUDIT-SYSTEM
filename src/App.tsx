@@ -4,11 +4,14 @@ import {
   clearSession,
   getStoredUser,
   getToken,
+  isDpoPending,
+  markDpoPending,
   saveSession,
   setUnauthorizedHandler,
 } from './lib/api';
 import type { SessionUser } from './lib/types';
 import { CarViewModal } from './components/CarViewModal';
+import { DpoNoticeGate } from './components/DpoNoticeGate';
 import { Layout, type AppPage } from './components/Layout';
 import { ToastProvider } from './components/Toast';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
@@ -33,7 +36,15 @@ function readInitialRoute(): { page: AppPage | 'login'; carNo?: string } {
 }
 
 function AppInner() {
+  const [logoutNotice, setLogoutNotice] = useState<string>(() => {
+    if (getToken() && isDpoPending()) {
+      clearSession();
+      return 'Your account was automatically logged out because the Privacy, Security, and Accountability Notice was not confirmed.';
+    }
+    return '';
+  });
   const [user, setUser] = useState<SessionUser | null>(() => (getToken() ? getStoredUser() : null));
+  const [dpoConfirmed, setDpoConfirmed] = useState<boolean>(() => Boolean(getToken() && !isDpoPending()));
   const [company, setCompany] = useState<Record<string, string>>({});
   const [route, setRoute] = useState<{ page: AppPage | 'login'; carNo?: string }>(() =>
     readInitialRoute()
@@ -71,6 +82,7 @@ function AppInner() {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setUser(null);
+      setDpoConfirmed(false);
       setViewCarNo(null);
     });
   }, []);
@@ -102,24 +114,52 @@ function AppInner() {
 
   const handleLoginSuccess = (token: string, loggedInUser: SessionUser) => {
     saveSession(token, loggedInUser);
+    markDpoPending(true);
+    setLogoutNotice('');
+    setDpoConfirmed(false);
     setUser(loggedInUser);
     const defaultPage: AppPage = loggedInUser.role === 'Admin' ? 'admin' : 'employee';
     navigate(defaultPage);
   };
 
-  const handleLogout = () => {
+  const handleLogout = useCallback((reason?: string) => {
     api.logout().catch(() => {});
     clearSession();
     setUser(null);
+    setDpoConfirmed(false);
     setViewCarNo(null);
+    setLogoutNotice(typeof reason === 'string' ? reason : '');
     const url = new URL(window.location.href);
     url.searchParams.delete('page');
     url.searchParams.delete('car');
     window.history.replaceState({}, '', url.toString());
+  }, []);
+
+  const handleDpoConfirm = async () => {
+    markDpoPending(false);
+    setDpoConfirmed(true);
+    await api.confirmDpo().catch(() => {});
   };
 
   if (!user) {
-    return <LoginPage company={company} onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <LoginPage
+        company={company}
+        notice={logoutNotice}
+        onLoginSuccess={handleLoginSuccess}
+      />
+    );
+  }
+
+  if (!dpoConfirmed) {
+    return (
+      <DpoNoticeGate
+        user={user}
+        company={company}
+        onConfirm={handleDpoConfirm}
+        onDeclineOrTimeout={(reason) => handleLogout(reason)}
+      />
+    );
   }
 
   let activePage: AppPage =
@@ -139,7 +179,7 @@ function AppInner() {
       activePage={activePage}
       company={company}
       onNavigate={navigate}
-      onLogout={handleLogout}
+      onLogout={() => handleLogout()}
     >
       {activePage === 'admin' && (
         <AdminDashboardPage

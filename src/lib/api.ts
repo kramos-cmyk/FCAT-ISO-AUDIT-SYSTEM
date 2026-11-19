@@ -15,6 +15,7 @@ import type {
 const TOKEN_KEY = 'fcat_token';
 const USER_KEY = 'fcat_user';
 const COMPANY_CACHE_KEY = 'fcat_company_cache';
+const DPO_PENDING_KEY = 'fcat_dpo_pending';
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -29,6 +30,15 @@ export function getStoredUser(): SessionUser | null {
   }
 }
 
+export function isDpoPending(): boolean {
+  return localStorage.getItem(DPO_PENDING_KEY) === '1';
+}
+
+export function markDpoPending(pending: boolean): void {
+  if (pending) localStorage.setItem(DPO_PENDING_KEY, '1');
+  else localStorage.removeItem(DPO_PENDING_KEY);
+}
+
 export function saveSession(token: string, user: SessionUser): void {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
@@ -37,6 +47,7 @@ export function saveSession(token: string, user: SessionUser): void {
 export function clearSession(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(DPO_PENDING_KEY);
 }
 
 let onUnauthorized: (() => void) | null = null;
@@ -84,6 +95,7 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
+  confirmDpo: () => request<{ ok: boolean }>('/auth/dpo-confirm', { method: 'POST' }),
   me: () => request<{ ok: boolean; user: SessionUser }>('/auth/me'),
   changePassword: (oldPassword: string, newPassword: string) =>
     request<{ ok: boolean; error?: string }>('/auth/change-password', {

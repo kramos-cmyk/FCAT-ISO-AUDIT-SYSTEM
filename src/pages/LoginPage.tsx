@@ -6,9 +6,11 @@ import { FCATLogo } from '../components/BrandCrest';
 
 export function LoginPage({
   company,
+  notice,
   onLoginSuccess,
 }: {
   company: Record<string, string>;
+  notice?: string;
   onLoginSuccess: (token: string, user: SessionUser) => void;
 }) {
   const [email, setEmail] = useState('');
@@ -57,6 +59,15 @@ export function LoginPage({
           <p className="text-xs text-center text-[#7A6F6F] mt-1 mb-6">
             Corrective Actions &amp; Compliance Portal
           </p>
+
+          {!error && notice && (
+            <div
+              role="status"
+              className="mb-4 rounded-lg bg-[#FBF0D6] border border-[#E7CF86] text-[#6B5300] px-3.5 py-2.5 text-xs font-medium"
+            >
+              {notice}
+            </div>
+          )}
 
           {error && (
             <div
