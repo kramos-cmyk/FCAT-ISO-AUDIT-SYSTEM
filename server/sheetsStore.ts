@@ -13,6 +13,7 @@ import {
   DIRECT_MESSAGE_COLS,
   HELPDESK_MESSAGE_COLS,
   HELPDESK_TICKET_COLS,
+  LEGACY_DEPARTMENT_MAP,
   LOG_COLS,
   NOTIF_COLS,
   SETTINGS_COLS,
@@ -171,13 +172,26 @@ export class GoogleSheetsStore implements DataStore {
     await this.ensureTab(SHEETS.HELPDESK_MESSAGES, HELPDESK_MESSAGE_COLS);
     await this.ensureTab(SHEETS.DIRECT_MESSAGES, DIRECT_MESSAGE_COLS);
 
-    const deptRows = await this.getRowsRaw(SHEETS.DEPARTMENTS);
-    if (deptRows.length <= 1) {
-      await this.sheets.spreadsheets.values.append({
+    const deptRows = await this.getRowsRaw(SHEETS.DEPARTMENTS, true);
+    const existingDepts = deptRows.slice(1).map((r) => String(r[0] || '').trim()).filter(Boolean);
+    const hasLegacyDept = existingDepts.some((d) => Boolean(LEGACY_DEPARTMENT_MAP[d.toLowerCase()]));
+    const missingDefaultDept = DEFAULT_DEPARTMENTS.some((d) => !existingDepts.includes(d));
+    if (deptRows.length <= 1 || hasLegacyDept || missingDefaultDept) {
+      const customDepts = existingDepts.filter(
+        (d) => !LEGACY_DEPARTMENT_MAP[d.toLowerCase()] && !DEFAULT_DEPARTMENTS.includes(d)
+      );
+      const nextDepts = Array.from(new Set([...DEFAULT_DEPARTMENTS, ...customDepts]));
+      await this.sheets.spreadsheets.values.clear({
+        spreadsheetId: this.spreadsheetId,
+        range: `'${SHEETS.DEPARTMENTS}'!A:Z`,
+      });
+      await this.sheets.spreadsheets.values.update({
         spreadsheetId: this.spreadsheetId,
         range: `'${SHEETS.DEPARTMENTS}'!A1`,
         valueInputOption: 'RAW',
-        requestBody: { values: DEFAULT_DEPARTMENTS.map((d) => [d]) },
+        requestBody: {
+          values: [DEPARTMENT_COLS, ...nextDepts.map((d) => [d])],
+        },
       });
       this.invalidate(SHEETS.DEPARTMENTS);
     }

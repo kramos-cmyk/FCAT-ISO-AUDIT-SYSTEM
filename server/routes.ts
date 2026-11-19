@@ -134,17 +134,41 @@ async function resolveAssignee(employeeId: unknown): Promise<{
   return { ok: true, EmployeeID: user.UserID, EmployeeName: user.Name };
 }
 
+function userCanAccessCar(userId: string, userDept: string, rec: CarRecord): boolean {
+  if (userHasDepartment(userDept, rec.Department)) return true;
+  if (
+    rec.EmployeeName &&
+    rec.EmployeeName !== '(Unassigned)' &&
+    userHasDepartment(userDept, rec.EmployeeName)
+  ) {
+    return true;
+  }
+  if (rec.EmployeeID && rec.EmployeeID === userId) return true;
+  return false;
+}
+
 async function createAndPushNotification(notif: NotificationRecord) {
   await getStore().createNotification(notif);
   emitToUsers([notif.ToUserID], { type: 'notification:new', payload: notif });
 }
 
-async function notifyDepartment(fromUserId: string, department: string, message: string, carNo: string) {
-  if (!department) return;
+async function notifyDepartment(
+  fromUserId: string,
+  departmentOrList: string | string[],
+  message: string,
+  carNo: string
+) {
+  const depts = (Array.isArray(departmentOrList) ? departmentOrList : [departmentOrList])
+    .map((d) => String(d || '').trim())
+    .filter((d) => Boolean(d) && d !== '(Unassigned)');
+  if (depts.length === 0) return;
   const store = getStore();
   const users = await store.listUsers();
   const targets = users.filter(
-    (u) => u.Role === 'Employee' && u.Status === 'Active' && userHasDepartment(u.Department, department)
+    (u) =>
+      u.Role === 'Employee' &&
+      u.Status === 'Active' &&
+      depts.some((dept) => userHasDepartment(u.Department, dept))
   );
   for (const u of targets) {
     await createAndPushNotification({
@@ -555,7 +579,7 @@ export function createApiRouter(): express.Router {
       }
       const freshUser = await store.findUserById(req.user!.userId);
       const userDept = freshUser ? freshUser.Department : req.user!.department;
-      res.json(all.filter((r) => userHasDepartment(userDept, r.Department)));
+      res.json(all.filter((r) => userCanAccessCar(req.user!.userId, userDept, r)));
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load records.' });
     }
@@ -572,7 +596,7 @@ export function createApiRouter(): express.Router {
       if (!isAuditorOrAdmin(req.user!.role)) {
         const freshUser = await store.findUserById(req.user!.userId);
         const userDept = freshUser ? freshUser.Department : req.user!.department;
-        if (!userHasDepartment(userDept, rec.Department)) {
+        if (!userCanAccessCar(req.user!.userId, userDept, rec)) {
           res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
           return;
         }
@@ -617,13 +641,21 @@ export function createApiRouter(): express.Router {
       const whyFactors = parseWhyFactors(payload.RootCauseFactors);
       delete payload.RootCauseFactors;
 
-      const assignee = await resolveAssignee(payload.EmployeeID);
+      const receivedService = String(payload.ReceivedService || '').trim();
+      delete payload.ReceivedService;
+
+      let assignee: { ok: boolean; EmployeeID?: string; EmployeeName?: string; error?: string };
+      if (receivedService) {
+        assignee = { ok: true, EmployeeID: '', EmployeeName: receivedService };
+      } else {
+        assignee = await resolveAssignee(payload.EmployeeID);
+        if (!assignee.ok) {
+          res.json({ ok: false, error: assignee.error });
+          return;
+        }
+      }
       delete payload.EmployeeID;
       delete payload.EmployeeName;
-      if (!assignee.ok) {
-        res.json({ ok: false, error: assignee.error });
-        return;
-      }
 
       const now = nowIso();
       const record: CarRecord = {
@@ -689,7 +721,12 @@ export function createApiRouter(): express.Router {
           CreatedAt: nowIso(),
         });
       } else {
-        await notifyDepartment(req.user!.userId, record.Department, raiseMessage, carNo);
+        await notifyDepartment(
+          req.user!.userId,
+          [record.Department, record.EmployeeName],
+          raiseMessage,
+          carNo
+        );
       }
 
       await store.appendLog({ Timestamp: nowIso(), UserID: req.user!.userId, Action: 'SUBMIT_CAR', Details: carNo });
@@ -712,7 +749,7 @@ export function createApiRouter(): express.Router {
       if (!isAdmin) {
         const freshUser = await store.findUserById(req.user!.userId);
         const userDept = freshUser ? freshUser.Department : req.user!.department;
-        if (!userHasDepartment(userDept, rec.Department)) {
+        if (!userCanAccessCar(req.user!.userId, userDept, rec)) {
           res.status(403).json({ ok: false, error: 'Not authorized to edit this record.' });
           return;
         }
@@ -727,6 +764,9 @@ export function createApiRouter(): express.Router {
       const whyFactors = hasWhyFactors ? parseWhyFactors(payload.RootCauseFactors) : undefined;
       delete payload.RootCauseFactors;
       delete payload.CARNo;
+      const receivedServiceInput =
+        payload.ReceivedService !== undefined ? String(payload.ReceivedService || '').trim() : undefined;
+      delete payload.ReceivedService;
       sanitizeCarPayload(payload);
 
       if (!isAdmin) {
@@ -735,7 +775,14 @@ export function createApiRouter(): express.Router {
 
       delete payload.EmployeeName;
       let reassignedTo: { EmployeeID?: string; EmployeeName?: string } | null = null;
-      if (isAdmin && payload.EmployeeID !== undefined) {
+      let reassignedService: string | null = null;
+      if (isAdmin && receivedServiceInput !== undefined) {
+        payload.EmployeeID = '';
+        payload.EmployeeName = receivedServiceInput || '(Unassigned)';
+        if (receivedServiceInput && receivedServiceInput !== rec.EmployeeName) {
+          reassignedService = receivedServiceInput;
+        }
+      } else if (isAdmin && payload.EmployeeID !== undefined) {
         const assignee = await resolveAssignee(payload.EmployeeID);
         if (!assignee.ok) {
           res.json({ ok: false, error: assignee.error });
@@ -762,14 +809,21 @@ export function createApiRouter(): express.Router {
         updates.AdminFlag = '';
         updates.AdminNote = '';
       }
-      if (!isAdmin && (!rec.EmployeeID || rec.EmployeeID === '')) {
+      if (!isAdmin && (!rec.EmployeeID || rec.EmployeeID === '') && (!rec.EmployeeName || rec.EmployeeName === '(Unassigned)')) {
         updates.EmployeeID = req.user!.userId;
         updates.EmployeeName = req.user!.name;
       }
 
       await store.updateCAR(carNo, updates, whyFactors);
 
-      if (reassignedTo?.EmployeeID) {
+      if (reassignedService) {
+        await notifyDepartment(
+          req.user!.userId,
+          reassignedService,
+          `CAR record ${carNo} has been assigned to your service (${reassignedService}).`,
+          carNo
+        );
+      } else if (reassignedTo?.EmployeeID) {
         await store.createNotification({
           NotificationID: newId('N'),
           ToUserID: reassignedTo.EmployeeID,
@@ -815,7 +869,7 @@ export function createApiRouter(): express.Router {
           CreatedAt: nowIso(),
         });
       } else {
-        await notifyDepartment(req.user!.userId, rec.Department, msg, carNo);
+        await notifyDepartment(req.user!.userId, [rec.Department, rec.EmployeeName], msg, carNo);
       }
       await store.appendLog({ Timestamp: nowIso(), UserID: req.user!.userId, Action: 'FLAG_CAR', Details: carNo });
       res.json({ ok: true });
@@ -940,7 +994,7 @@ export function createApiRouter(): express.Router {
       if (!isAuditorOrAdmin(req.user!.role)) {
         const freshUser = await store.findUserById(req.user!.userId);
         const userDept = freshUser ? freshUser.Department : req.user!.department;
-        if (!userHasDepartment(userDept, rec.Department)) {
+        if (!userCanAccessCar(req.user!.userId, userDept, rec)) {
           res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
           return;
         }
@@ -987,7 +1041,7 @@ export function createApiRouter(): express.Router {
           CreatedAt: nowIso(),
         });
       } else {
-        await notifyDepartment(req.user!.userId, rec.Department, notifyMsg, carNo);
+        await notifyDepartment(req.user!.userId, [rec.Department, rec.EmployeeName], notifyMsg, carNo);
       }
       await store.appendLog({ Timestamp: nowIso(), UserID: req.user!.userId, Action: 'ADD_COMMENT', Details: carNo });
       res.json({ ok: true, comment });
@@ -1008,7 +1062,7 @@ export function createApiRouter(): express.Router {
       if (!isAuditorOrAdmin(req.user!.role)) {
         const freshUser = await store.findUserById(req.user!.userId);
         const userDept = freshUser ? freshUser.Department : req.user!.department;
-        if (!userHasDepartment(userDept, rec.Department)) {
+        if (!userCanAccessCar(req.user!.userId, userDept, rec)) {
           res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
           return;
         }

@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { SESSION_HOURS, WHY_FACTORS } from './constants.js';
+import { SESSION_HOURS, WHY_FACTORS, canonicalDepartment } from './constants.js';
 import type { SessionUser, UserRole, WhyWhyFactors } from './types.js';
 
 export function normalizeUserRole(raw: unknown): UserRole {
@@ -144,8 +144,11 @@ export function parseDepartments(deptString: string): string[] {
 }
 
 export function userHasDepartment(userDeptString: string, targetDept: string): boolean {
-  if (!targetDept) return false;
-  return parseDepartments(userDeptString).includes(targetDept.trim());
+  const targetCanonical = canonicalDepartment(targetDept);
+  if (!targetCanonical) return false;
+  return parseDepartments(userDeptString).some(
+    (d) => canonicalDepartment(d).toLowerCase() === targetCanonical.toLowerCase()
+  );
 }
 
 export function isValidEvidenceUrl(url: unknown): boolean {

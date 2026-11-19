@@ -20,15 +20,87 @@ export const SHEETS = {
 } as const;
 
 export const DEFAULT_DEPARTMENTS: string[] = [
-  'Basic Education', 'TESDA', 'Acads - CHED', 'Accounting', 'Admission', 'Alumni',
-  'Disciplinary', 'Document Control', 'Enrolment', 'Extension', 'Guidance',
-  'Human Resources', 'Inventory', 'IT Services', 'Library Services', 'Maintenance',
-  'Marketing', 'Medical', 'Pollution Control', 'Procurement', 'Registrar', 'Research',
-  'Safety', 'Scholarship', 'Security', 'Student Affairs', 'College of Education',
-  'College of Computer Science', 'College of Hospitality Management',
-  'College of Criminal Justice', 'College of Business Administration & Accountancy',
-  'College of Nursing', 'Strategic Planning', 'Review and Improvement',
+  'Academic Services - Tertiary',
+  'Academic Services - TESDA',
+  'Academic Services - Basic Education',
+  'Document Control',
+  'Review & Improvement',
+  'Strategic Planning',
+  'Alumni Services',
+  'Academic Services - College of Education',
+  'Academic Services - College of Hospitality Management',
+  'Academic Services - College of Computer Science',
+  'Academic Services - College of Nursing',
+  'Academic Services - College of Business Administration and Accountancy',
+  'Academic Services - College of Criminal Justice',
+  'Student Affairs Services',
+  'Extension Services',
+  'IT Services',
+  'Human Resource Services',
+  'Library Services',
+  'Research Services',
+  'Disciplinary Services',
+  'Scholarship Services',
+  'Guidance & Counseling Services',
+  'Accounting Services',
+  'Procurement Services',
+  'Registrar / Student Records Services',
+  'Enrollment Services',
+  'Admission Services',
+  'Marketing Services',
+  'Maintenance Services',
+  'Inventory Services',
+  'Pollution Control Services',
+  'Security Services',
+  'Safety Services',
+  'Medical Services',
 ];
+
+export const LEGACY_DEPARTMENT_MAP: Record<string, string> = {
+  'acads - ched': 'Academic Services - Tertiary',
+  'tesda': 'Academic Services - TESDA',
+  'basic education': 'Academic Services - Basic Education',
+  'review and improvement': 'Review & Improvement',
+  'alumni': 'Alumni Services',
+  'college of education': 'Academic Services - College of Education',
+  'college of hospitality management': 'Academic Services - College of Hospitality Management',
+  'college of computer science': 'Academic Services - College of Computer Science',
+  'college of nursing': 'Academic Services - College of Nursing',
+  'college of business administration & accountancy':
+    'Academic Services - College of Business Administration and Accountancy',
+  'college of business administration and accountancy':
+    'Academic Services - College of Business Administration and Accountancy',
+  'college of criminal justice': 'Academic Services - College of Criminal Justice',
+  'student affairs': 'Student Affairs Services',
+  'extension': 'Extension Services',
+  'human resources': 'Human Resource Services',
+  'research': 'Research Services',
+  'disciplinary': 'Disciplinary Services',
+  'scholarship': 'Scholarship Services',
+  'guidance': 'Guidance & Counseling Services',
+  'accounting': 'Accounting Services',
+  'procurement': 'Procurement Services',
+  'registrar': 'Registrar / Student Records Services',
+  'enrolment': 'Enrollment Services',
+  'enrollment': 'Enrollment Services',
+  'admission': 'Admission Services',
+  'marketing': 'Marketing Services',
+  'maintenance': 'Maintenance Services',
+  'inventory': 'Inventory Services',
+  'pollution control': 'Pollution Control Services',
+  'security': 'Security Services',
+  'safety': 'Safety Services',
+  'medical': 'Medical Services',
+};
+
+export function canonicalDepartment(name: string): string {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return '';
+  const mapped = LEGACY_DEPARTMENT_MAP[trimmed.toLowerCase()];
+  if (mapped) return mapped;
+  const exact = DEFAULT_DEPARTMENTS.find((d) => d.toLowerCase() === trimmed.toLowerCase());
+  return exact || trimmed;
+}
 
 export const DEPARTMENT_COLS = ['Name'];
 export const USER_COLS = ['UserID', 'Name', 'Email', 'PasswordHash', 'Role', 'Department', 'Position', 'Status', 'CreatedAt'];

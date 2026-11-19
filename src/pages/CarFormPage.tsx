@@ -17,7 +17,6 @@ import type {
   CorrectionEntry,
   CorrectiveActionEntry,
   FollowUpEntry,
-  ProcessOwnerOption,
   SessionUser,
 } from '../lib/types';
 import { OfficialCarHeader } from '../components/BrandCrest';
@@ -53,12 +52,11 @@ export function CarFormPage({
   const [saving, setSaving] = useState(false);
 
   const [departments, setDepartments] = useState<string[]>([]);
-  const [processOwners, setProcessOwners] = useState<ProcessOwnerOption[]>([]);
   const [editRecord, setEditRecord] = useState<CarRecord | null>(null);
 
   // Section 1: Finding Details
   const [customCarNo, setCustomCarNo] = useState('');
-  const [employeeId, setEmployeeId] = useState('');
+  const [receivedService, setReceivedService] = useState('');
   const [type, setType] = useState('');
   const [source, setSource] = useState('');
   const [department, setDepartment] = useState('');
@@ -119,13 +117,11 @@ export function CarFormPage({
 
     Promise.all([
       api.getDepartments().catch(() => []),
-      isAuditor ? api.getProcessOwners().catch(() => []) : Promise.resolve([]),
       carNo ? api.getCAR(carNo) : Promise.resolve(null),
     ])
-      .then(([depts, owners, rec]) => {
+      .then(([depts, rec]) => {
         if (cancelled) return;
         setDepartments(depts || []);
-        setProcessOwners(owners || []);
 
         if (carNo && !rec) {
           showToast('Record not found.', 'error');
@@ -135,7 +131,11 @@ export function CarFormPage({
 
         if (rec) {
           setEditRecord(rec);
-          setEmployeeId(rec.EmployeeID || '');
+          setReceivedService(
+            !rec.EmployeeID && rec.EmployeeName && rec.EmployeeName !== '(Unassigned)'
+              ? rec.EmployeeName
+              : ''
+          );
           setType(rec.Type || '');
           setSource(rec.Source || '');
           setDepartment(rec.Department || '');
@@ -199,33 +199,22 @@ export function CarFormPage({
     if (editRecord?.Department && !list.includes(editRecord.Department)) {
       list.push(editRecord.Department);
     }
+    if (receivedService && !list.includes(receivedService)) {
+      list.push(receivedService);
+    }
     return list.sort();
-  }, [departments, editRecord]);
+  }, [departments, editRecord, receivedService]);
 
-  const filteredOwners = useMemo(() => {
-    if (!department) return processOwners;
-    return processOwners.filter((p) =>
-      p.department
-        .split(',')
-        .map((d) => d.trim())
-        .includes(department)
-    );
-  }, [processOwners, department]);
+  const handleReceivedServiceChange = (nextService: string) => {
+    setReceivedService(nextService);
+    if (nextService && !department) {
+      setDepartment(nextService);
+      setErrors((prev) => ({ ...prev, Department: '' }));
+    }
+  };
 
   const handleDepartmentChange = (nextDept: string) => {
     setDepartment(nextDept);
-    if (employeeId) {
-      const stillMatches = processOwners.some(
-        (p) =>
-          p.userId === employeeId &&
-          (!nextDept ||
-            p.department
-              .split(',')
-              .map((d) => d.trim())
-              .includes(nextDept))
-      );
-      if (!stillMatches) setEmployeeId('');
-    }
   };
 
   const isOFI = type === 'Opportunity for Improvement (OFI)';
@@ -346,7 +335,8 @@ export function CarFormPage({
       };
 
       if (isAuditor) {
-        payload.EmployeeID = employeeId;
+        payload.ReceivedService = receivedService;
+        payload.EmployeeID = '';
       }
 
       if (editRecord) {
@@ -462,16 +452,16 @@ export function CarFormPage({
                 />
               </div>
               <div>
-                <FieldLabel label="Received By (optional — blank for department-wide)" />
+                <FieldLabel label="Received By (Service — accounts with this service can view)" />
                 <select
-                  value={employeeId}
-                  onChange={(e) => setEmployeeId(e.target.value)}
+                  value={receivedService}
+                  onChange={(e) => handleReceivedServiceChange(e.target.value)}
                   className={inputCls()}
                 >
-                  <option value="">-- Unassigned (anyone in department) --</option>
-                  {filteredOwners.map((p) => (
-                    <option key={p.userId} value={p.userId}>
-                      {p.name} ({p.department})
+                  <option value="">-- Unassigned (anyone in selected Department / Process) --</option>
+                  {deptOptions.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
                     </option>
                   ))}
                 </select>
@@ -491,7 +481,7 @@ export function CarFormPage({
                   value={
                     editRecord.EmployeeName && editRecord.EmployeeName !== '(Unassigned)'
                       ? editRecord.EmployeeName
-                      : 'Unclaimed'
+                      : editRecord.Department || 'Unclaimed'
                   }
                   className={disabledInputCls}
                 />

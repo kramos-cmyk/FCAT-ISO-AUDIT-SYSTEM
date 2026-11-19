@@ -5,7 +5,9 @@ import {
   CAR_COLS,
   DEFAULT_COMPANY_DETAILS,
   DEFAULT_DEPARTMENTS,
+  LEGACY_DEPARTMENT_MAP,
   WHY_FACTORS,
+  canonicalDepartment,
 } from './constants.js';
 import { hashPassword, newId, nowIso, parseJsonArray } from './security.js';
 import type {
@@ -227,14 +229,43 @@ export class SqliteStore implements DataStore {
       CREATE INDEX IF NOT EXISTS idx_dm_pair ON direct_messages(FromUserID, ToUserID, CreatedAt);
     `);
 
-    // Seed default departments if empty
-    const deptCount = (this.db.prepare('SELECT COUNT(*) as c FROM departments').get() as { c: number }).c;
-    if (deptCount === 0) {
+    // Seed and migrate official service/department list
+    const existingDepts = (this.db.prepare('SELECT Name FROM departments').all() as Array<{ Name: string }>).map(
+      (r) => r.Name
+    );
+    const hasLegacyDept = existingDepts.some((d) => Boolean(LEGACY_DEPARTMENT_MAP[d.trim().toLowerCase()]));
+    const missingDefaultDept = DEFAULT_DEPARTMENTS.some((d) => !existingDepts.includes(d));
+    if (existingDepts.length === 0 || hasLegacyDept || missingDefaultDept) {
+      const deleteDept = this.db.prepare('DELETE FROM departments WHERE Name = ?');
       const insertDept = this.db.prepare('INSERT OR IGNORE INTO departments (Name) VALUES (?)');
-      const tx = this.db.transaction((names: string[]) => {
-        for (const name of names) insertDept.run(name);
+      const tx = this.db.transaction(() => {
+        for (const d of existingDepts) {
+          if (LEGACY_DEPARTMENT_MAP[d.trim().toLowerCase()] && !DEFAULT_DEPARTMENTS.includes(d)) {
+            deleteDept.run(d);
+          }
+        }
+        for (const name of DEFAULT_DEPARTMENTS) {
+          insertDept.run(name);
+        }
       });
-      tx(DEFAULT_DEPARTMENTS);
+      tx();
+    }
+
+    // Migrate legacy user service names to canonical names
+    const allUsers = this.db.prepare('SELECT UserID, Department FROM users').all() as Array<{
+      UserID: string;
+      Department: string;
+    }>;
+    const updateUserDept = this.db.prepare('UPDATE users SET Department = ? WHERE UserID = ?');
+    for (const u of allUsers) {
+      const parts = String(u.Department || '')
+        .split(',')
+        .map((p) => canonicalDepartment(p))
+        .filter(Boolean);
+      const normalized = Array.from(new Set(parts)).join(', ');
+      if (normalized && normalized !== u.Department) {
+        updateUserDept.run(normalized, u.UserID);
+      }
     }
 
     // Seed company details if empty, and migrate legacy Drive logo placeholder to official local seal
