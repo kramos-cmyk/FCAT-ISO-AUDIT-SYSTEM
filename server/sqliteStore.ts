@@ -195,7 +195,7 @@ export class SqliteStore implements DataStore {
       tx(DEFAULT_DEPARTMENTS);
     }
 
-    // Seed company details if empty
+    // Seed company details if empty, and migrate legacy Drive logo placeholder to official local seal
     const companyCount = (this.db.prepare('SELECT COUNT(*) as c FROM company_details').get() as { c: number }).c;
     if (companyCount === 0) {
       const insertKv = this.db.prepare('INSERT OR REPLACE INTO company_details (Key, Value) VALUES (?, ?)');
@@ -203,6 +203,10 @@ export class SqliteStore implements DataStore {
         for (const [k, v] of entries) insertKv.run(k, v);
       });
       tx(Object.entries(DEFAULT_COMPANY_DETAILS));
+    } else {
+      this.db
+        .prepare("UPDATE company_details SET Value = '/fcat-logo.png' WHERE Key = 'LogoUrl' AND Value LIKE '%1AjBH5OjVr9uuo3Wlb7VywM7eAkXD7zlR%'")
+        .run();
     }
 
     // Seed default admin if no users exist

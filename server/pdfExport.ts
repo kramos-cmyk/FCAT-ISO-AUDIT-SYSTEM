@@ -1,7 +1,21 @@
+import fs from 'fs';
+import path from 'path';
 import PDFDocument from 'pdfkit';
 import { APP_NAME, FO_RI_05_META, WHY_FACTORS } from './constants.js';
 import { isValidEvidenceUrl, nowIso, parseJsonArray, parseWhyFactors } from './security.js';
 import type { CarRecord } from './types.js';
+
+function resolveSchoolLogoPath(): string | null {
+  const candidates = [
+    path.resolve(process.cwd(), 'public/fcat-logo.png'),
+    path.resolve(process.cwd(), 'dist/fcat-logo.png'),
+    path.resolve(process.cwd(), 'public/assets/aistudio/FCAT_LOGO_241e496f.png'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
 
 export async function generateCarPdfBuffer(
   rec: CarRecord,
@@ -30,32 +44,140 @@ export async function generateCarPdfBuffer(
       }
     };
 
-    const drawHeader = (pageNum: number) => {
-      const startY = 36;
+    const logoPath = resolveSchoolLogoPath();
+    const HEADER_X = 42;
+    const HEADER_Y = 34;
+    const TOP_ROW_H = 62;
+    const BOT_ROW_H = 30;
+    const COL_LOGO_W = 112;
+    const COL_META_W = 152;
+    const COL_TITLE_W = pageWidth - COL_LOGO_W - COL_META_W;
+    const COL_GROUP_W = 178;
+    const COL_EFF_W = pageWidth - COL_GROUP_W - COL_META_W;
+    const META_X = HEADER_X + pageWidth - COL_META_W;
+    const META_SPLIT_X = META_X + COL_META_W / 2;
+
+    const drawHeader = (_pageNum: number) => {
+      const x = HEADER_X;
+      const y = HEADER_Y;
+      const totalH = TOP_ROW_H + BOT_ROW_H;
+      const midY = y + TOP_ROW_H / 2;
+      const botY = y + TOP_ROW_H;
+
       doc.save();
-      doc.rect(42, startY, pageWidth, 56).fill('#FFFFFF').strokeColor(LINE).lineWidth(1).stroke();
-      doc.rect(42, startY, 6, 56).fill(MAROON);
-      doc.fillColor(MAROON_DARK).font('Helvetica-Bold').fontSize(13).text('CORRECTIVE ACTION REPORT', 56, startY + 8);
-      doc
-        .fillColor(MUTED)
-        .font('Helvetica')
-        .fontSize(8.5)
-        .text(
-          `${company.CompanyName || 'Fernandez College of Arts And Technology, Inc. (FCAT)'}  |  ${company.Standard || 'ISO 9001:2015'}`,
-          56,
-          startY + 25
-        );
-      doc
-        .fillColor(TEXT)
-        .font('Helvetica')
-        .fontSize(8)
-        .text(
-          `Document Code: ${FO_RI_05_META.docCode}   |   Rev. No.: ${FO_RI_05_META.revNo}   |   Process Group: ${FO_RI_05_META.processGroup}   |   Effectivity: ${FO_RI_05_META.effectivityDate}   |   Page ${pageNum}`,
-          56,
-          startY + 39
-        );
+      doc.rect(x, y, pageWidth, totalH).fill('#FFFFFF');
+      doc.strokeColor('#111111').lineWidth(0.9);
+      doc.rect(x, y, pageWidth, totalH).stroke();
+
+      // Horizontal dividers
+      doc.moveTo(x, botY).lineTo(x + pageWidth, botY).stroke();
+      doc.moveTo(META_X, midY).lineTo(x + pageWidth, midY).stroke();
+
+      // Vertical solid dividers
+      doc.moveTo(x + COL_LOGO_W, y).lineTo(x + COL_LOGO_W, botY).stroke();
+      doc.moveTo(META_X, y).lineTo(META_X, y + totalH).stroke();
+      doc.moveTo(x + COL_GROUP_W, botY).lineTo(x + COL_GROUP_W, y + totalH).stroke();
+
+      // Vertical dotted dividers inside metadata & page number column
+      doc.save();
+      doc.dash(1.2, { space: 2 }).lineWidth(0.75).strokeColor('#222222');
+      doc.moveTo(META_SPLIT_X, y).lineTo(META_SPLIT_X, y + totalH).stroke();
       doc.restore();
-      doc.y = startY + 68;
+
+      // School logo centered in top-left box
+      if (logoPath) {
+        try {
+          const imgSize = 52;
+          doc.image(logoPath, x + (COL_LOGO_W - imgSize) / 2, y + (TOP_ROW_H - imgSize) / 2, {
+            fit: [imgSize, imgSize],
+            align: 'center',
+            valign: 'center',
+          });
+        } catch {
+          // Ignore image decode fallback
+        }
+      }
+
+      // Title centered in top-middle box
+      doc
+        .fillColor('#000000')
+        .font('Times-Bold')
+        .fontSize(12.5)
+        .text('CORRECTIVE ACTION REPORT', x + COL_LOGO_W + 6, y + 24, {
+          width: COL_TITLE_W - 12,
+          align: 'center',
+          lineBreak: false,
+        });
+
+      // Top-right metadata labels & values
+      doc
+        .fillColor('#000000')
+        .font('Times-Bold')
+        .fontSize(9.5)
+        .text('Document', META_X + 6, y + 5, { width: COL_META_W / 2 - 10, lineBreak: false })
+        .text('Code', META_X + 6, y + 16, { width: COL_META_W / 2 - 10, lineBreak: false });
+      doc
+        .font('Times-Roman')
+        .fontSize(9.5)
+        .text(FO_RI_05_META.docCode, META_SPLIT_X + 6, y + 11, {
+          width: COL_META_W / 2 - 10,
+          lineBreak: false,
+        });
+
+      doc
+        .font('Times-Bold')
+        .fontSize(9.5)
+        .text('Rev. No.', META_X + 6, midY + 10, {
+          width: COL_META_W / 2 - 10,
+          lineBreak: false,
+        });
+      doc
+        .font('Times-Roman')
+        .fontSize(9.5)
+        .text(FO_RI_05_META.revNo, META_SPLIT_X + 6, midY + 10, {
+          width: COL_META_W / 2 - 10,
+          lineBreak: false,
+        });
+
+      // Bottom-left Process Group / Department
+      doc
+        .font('Times-Roman')
+        .fontSize(8.8)
+        .text('Process Group/Department:', x + 6, botY + 4, {
+          width: COL_GROUP_W - 12,
+          lineBreak: false,
+        });
+      doc
+        .font('Times-Bold')
+        .fontSize(9.5)
+        .text(FO_RI_05_META.processGroup, x + 6, botY + 16, {
+          width: COL_GROUP_W - 12,
+          lineBreak: false,
+        });
+
+      // Bottom-middle Effectivity Date
+      doc
+        .font('Times-Roman')
+        .fontSize(9.5)
+        .text('Effectivity Date: ', x + COL_GROUP_W + 8, botY + 10, {
+          width: COL_EFF_W - 16,
+          continued: true,
+          lineBreak: false,
+        })
+        .font('Times-Bold')
+        .text(FO_RI_05_META.effectivityDate, { lineBreak: false });
+
+      // Bottom-right Page No. label (page X of Y value stamped at end across all pages)
+      doc
+        .font('Times-Bold')
+        .fontSize(9.5)
+        .text('Page No.', META_X + 6, botY + 10, {
+          width: COL_META_W / 2 - 10,
+          lineBreak: false,
+        });
+
+      doc.restore();
+      doc.y = y + totalH + 10;
     };
 
     const banner = (title: string) => {
@@ -318,6 +440,21 @@ export async function generateCarPdfBuffer(
       .font('Helvetica-Oblique')
       .fontSize(7.5)
       .text(`Generated ${nowIso()} from ${APP_NAME} — record ${rec.CARNo}`, 42, doc.y + 6);
+
+    const range = doc.bufferedPageRange();
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i);
+      doc
+        .save()
+        .fillColor('#000000')
+        .font('Times-Roman')
+        .fontSize(9.5)
+        .text(`Page ${i + 1} of ${range.count}`, META_SPLIT_X + 6, HEADER_Y + TOP_ROW_H + 10, {
+          width: COL_META_W / 2 - 10,
+          lineBreak: false,
+        })
+        .restore();
+    }
 
     doc.end();
   });

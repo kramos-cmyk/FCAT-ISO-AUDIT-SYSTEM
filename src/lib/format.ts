@@ -7,6 +7,7 @@ export function roleLabel(role: string): string {
 export function safeUrl(url: string | undefined | null): string {
   const s = String(url || '').trim();
   if (!s) return '';
+  if (s === '/fcat-logo.png') return s;
   if (/^\/uploads\/[A-Za-z0-9._\-\/]+$/.test(s)) return s;
   if (/^https:\/\//i.test(s)) return s;
   return '';
@@ -15,7 +16,7 @@ export function safeUrl(url: string | undefined | null): string {
 export function driveImageSrc(url: string | undefined | null): string {
   const safe = safeUrl(url);
   if (!safe) return '';
-  if (safe.startsWith('/uploads/')) return safe;
+  if (safe.startsWith('/uploads/') || safe === '/fcat-logo.png') return safe;
   const m = safe.match(/\/file\/d\/([^/]+)/) || safe.match(/[?&]id=([^&]+)/);
   return m && m[1] ? `https://drive.google.com/thumbnail?id=${m[1]}&sz=w1000` : safe;
 }

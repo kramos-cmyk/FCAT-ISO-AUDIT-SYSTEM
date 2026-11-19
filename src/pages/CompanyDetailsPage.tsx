@@ -74,8 +74,13 @@ export function CompanyDetailsPage({
 
   const handleSaveCompany = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (logoUrl.trim() && !/^https:\/\//i.test(logoUrl.trim()) && !logoUrl.trim().startsWith('/uploads/')) {
-      showToast('Logo URL must be a valid https:// link.', 'error');
+    if (
+      logoUrl.trim() &&
+      logoUrl.trim() !== '/fcat-logo.png' &&
+      !/^https:\/\//i.test(logoUrl.trim()) &&
+      !logoUrl.trim().startsWith('/uploads/')
+    ) {
+      showToast('Logo URL must be a valid https:// link or /fcat-logo.png.', 'error');
       return;
     }
     setSaving(true);

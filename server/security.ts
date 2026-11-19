@@ -146,6 +146,7 @@ export function isValidHttpsOrUploadUrl(url: unknown): boolean {
   if (typeof url !== 'string') return false;
   const trimmed = url.trim();
   if (!trimmed) return false;
+  if (trimmed === '/fcat-logo.png') return true;
   if (/^\/uploads\/[A-Za-z0-9._\-\/]+$/.test(trimmed)) return true;
   return /^https:\/\//i.test(trimmed);
 }

@@ -1,6 +1,16 @@
 import React, { useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
 import { safeUrl } from '../lib/format';
+
+const OFFICIAL_SCHOOL_LOGO = '/fcat-logo.png';
+const LEGACY_DRIVE_LOGO_ID = '1AjBH5OjVr9uuo3Wlb7VywM7eAkXD7zlR';
+
+function resolveSchoolLogoSrc(logoUrl?: string): string {
+  const safe = safeUrl(logoUrl);
+  if (!safe || safe.includes(LEGACY_DRIVE_LOGO_ID)) {
+    return OFFICIAL_SCHOOL_LOGO;
+  }
+  return safe;
+}
 
 export function FCATLogo({
   logoUrl,
@@ -12,72 +22,98 @@ export function FCATLogo({
   size?: 'sm' | 'md' | 'lg';
 }) {
   const [failed, setFailed] = useState(false);
-  const src = safeUrl(logoUrl);
+  const src = failed ? OFFICIAL_SCHOOL_LOGO : resolveSchoolLogoSrc(logoUrl);
   const dim =
-    size === 'sm' ? 'h-8 w-8 rounded-md' : size === 'lg' ? 'h-14 w-14 rounded-xl' : 'h-10 w-10 rounded-lg';
-
-  if (!src || failed) {
-    return (
-      <div
-        className={`${dim} bg-[#C9A227] text-[#4A1219] flex items-center justify-center shrink-0 shadow-sm border border-[#A9861E]/40`}
-        aria-label={alt}
-      >
-        <ShieldCheck className={size === 'lg' ? 'h-7 w-7' : size === 'sm' ? 'h-4 w-4' : 'h-5 w-5'} />
-      </div>
-    );
-  }
+    size === 'sm' ? 'h-9 w-9' : size === 'lg' ? 'h-16 w-16' : 'h-11 w-11';
 
   return (
     <img
       src={src}
       alt={alt}
       referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-      className={`${dim} object-cover bg-white shrink-0 border border-[#EAD9D4]`}
+      onError={() => {
+        if (src !== OFFICIAL_SCHOOL_LOGO) setFailed(true);
+      }}
+      className={`${dim} rounded-full object-contain bg-white p-0.5 shrink-0 border border-[#C9A227]/60 shadow-sm`}
     />
   );
 }
 
 export function OfficialCarHeader({
-  companyName,
-  standard,
   logoUrl,
+  processGroup = 'Review & Improvement',
+  pageLabel = 'Page _ of _',
 }: {
   companyName?: string;
   standard?: string;
   logoUrl?: string;
+  processGroup?: string;
+  pageLabel?: string;
 }) {
+  const [failed, setFailed] = useState(false);
+  const src = failed ? OFFICIAL_SCHOOL_LOGO : resolveSchoolLogoSrc(logoUrl);
+
   return (
-    <div className="bg-white border border-[#EAD9D4] rounded-xl overflow-hidden mb-5">
-      <div className="h-1 bg-gradient-to-r from-[#C9A227] via-[#6B1A25] to-[#4A1219]" />
-      <div className="p-4 sm:px-6 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5 min-w-0">
-          <FCATLogo logoUrl={logoUrl} size="md" alt="FCAT Official Seal" />
-          <div className="min-w-0">
-            <div className="text-xs font-semibold tracking-wide text-[#7A6F6F] truncate">
-              {companyName || 'Fernandez College of Arts And Technology, Inc. (FCAT)'}
+    <div className="bg-white text-[#111111] border border-[#111111] mb-5 shadow-sm overflow-hidden font-serif">
+      {/* Top Row: School Seal | CORRECTIVE ACTION REPORT | Document Code & Rev. No. */}
+      <div className="grid grid-cols-1 sm:grid-cols-[132px_1fr_220px]">
+        <div className="border-b sm:border-b-0 sm:border-r border-[#111111] px-3 py-2.5 flex items-center justify-center bg-white">
+          <img
+            src={src}
+            alt="Fernandez College of Arts & Technology Seal"
+            referrerPolicy="no-referrer"
+            onError={() => {
+              if (src !== OFFICIAL_SCHOOL_LOGO) setFailed(true);
+            }}
+            className="h-16 w-16 sm:h-[74px] sm:w-[74px] object-contain"
+          />
+        </div>
+
+        <div className="border-b sm:border-b-0 sm:border-r border-[#111111] px-4 py-4 flex items-center justify-center text-center">
+          <h2 className="text-base sm:text-xl font-bold tracking-wide text-black m-0 uppercase">
+            CORRECTIVE ACTION REPORT
+          </h2>
+        </div>
+
+        <div className="grid grid-rows-2">
+          <div className="grid grid-cols-2 border-b border-[#111111]">
+            <div className="border-r border-dotted border-[#111111] px-2.5 py-1.5 font-bold text-xs sm:text-[13px] leading-tight flex items-center">
+              Document Code
             </div>
-            <h2 className="text-lg sm:text-xl font-bold text-[#4A1219] tracking-tight leading-tight">
-              CORRECTIVE ACTION REPORT
-            </h2>
+            <div className="px-2.5 py-1.5 text-xs sm:text-[13px] flex items-center">
+              FO-RI-05
+            </div>
+          </div>
+          <div className="grid grid-cols-2">
+            <div className="border-r border-dotted border-[#111111] px-2.5 py-1.5 font-bold text-xs sm:text-[13px] flex items-center">
+              Rev. No.
+            </div>
+            <div className="px-2.5 py-1.5 text-xs sm:text-[13px] flex items-center">
+              00
+            </div>
           </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-5 gap-y-1 text-xs border-t sm:border-t-0 sm:border-l border-[#EAD9D4] pt-3 sm:pt-0 sm:pl-5 shrink-0 font-mono-tabular">
-          <div>
-            <div className="text-[#7A6F6F] text-[10px] uppercase">Doc Code</div>
-            <div className="font-semibold text-[#2B2323]">FO-RI-05</div>
+      </div>
+
+      {/* Bottom Row: Process Group/Department | Effectivity Date | Page No. */}
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_220px] border-t border-[#111111]">
+        <div className="border-b sm:border-b-0 sm:border-r border-[#111111] px-3 py-1.5 text-xs sm:text-[13px] leading-snug">
+          <div>Process Group/Department:</div>
+          <div className="font-bold">{processGroup}</div>
+        </div>
+
+        <div className="border-b sm:border-b-0 sm:border-r border-[#111111] px-3 py-1.5 text-xs sm:text-[13px] flex items-center">
+          <span>
+            Effectivity Date: <strong className="font-bold">05/19/2025</strong>
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2">
+          <div className="border-r border-dotted border-[#111111] px-2.5 py-1.5 font-bold text-xs sm:text-[13px] flex items-center">
+            Page No.
           </div>
-          <div>
-            <div className="text-[#7A6F6F] text-[10px] uppercase">Rev. No.</div>
-            <div className="font-semibold text-[#2B2323]">00</div>
-          </div>
-          <div>
-            <div className="text-[#7A6F6F] text-[10px] uppercase">Standard</div>
-            <div className="font-semibold text-[#2B2323]">{standard || 'ISO 9001:2015'}</div>
-          </div>
-          <div>
-            <div className="text-[#7A6F6F] text-[10px] uppercase">Effectivity</div>
-            <div className="font-semibold text-[#2B2323]">05/19/2025</div>
+          <div className="px-2.5 py-1.5 text-xs sm:text-[13px] flex items-center">
+            {pageLabel}
           </div>
         </div>
       </div>

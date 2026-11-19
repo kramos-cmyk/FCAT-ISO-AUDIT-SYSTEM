@@ -80,7 +80,7 @@ export const DEFAULT_COMPANY_DETAILS: Record<string, string> = {
   CompanyName: 'Fernandez College of Arts And Technology, Inc. (FCAT)',
   Address: '3006 Baliwag City, Bulacan',
   Standard: 'ISO 9001:2015',
-  LogoUrl: 'https://drive.google.com/thumbnail?id=1AjBH5OjVr9uuo3Wlb7VywM7eAkXD7zlR&sz=w1200',
+  LogoUrl: '/fcat-logo.png',
   PrimaryColor: '#7A1E2B',
   AccentGreen: '#3A7D44',
   AccentGold: '#D4A017',
