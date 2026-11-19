@@ -43,10 +43,14 @@ export function LoginPage({
 
   return (
     <div
-      className="min-h-screen flex flex-col items-center justify-center p-4"
+      className="min-h-screen flex flex-col items-center justify-center p-4 bg-[#33090F]"
       style={{
-        background:
-          'radial-gradient(circle at 18% 22%, rgba(201,162,39,.16) 0%, transparent 42%), radial-gradient(circle at 84% 78%, rgba(201,162,39,.11) 0%, transparent 46%), linear-gradient(150deg, #6B1A25 0%, #4A1219 65%, #33090F 100%)',
+        backgroundImage:
+          "linear-gradient(rgba(42, 7, 13, 0.25), rgba(30, 5, 10, 0.42)), url('/assets/aistudio/FCAT_Background_9d8d0c62.png')",
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        backgroundAttachment: 'fixed',
       }}
     >
       <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden border border-[#EAD9D4]">
@@ -135,7 +139,7 @@ export function LoginPage({
         </div>
       </div>
 
-      <footer className="mt-6 text-xs text-white/75 text-center">
+      <footer className="mt-6 text-xs text-white/90 text-center drop-shadow-sm">
         &copy; {new Date().getFullYear()} FCAT ISO Audit Management System. All rights reserved.
       </footer>
     </div>

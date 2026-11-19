@@ -55,7 +55,17 @@ export function DpoNoticeGate({
     company.CompanyName || 'Fernandez College of Arts And Technology, Inc. (FCAT)';
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 bg-gradient-to-br from-[#6B1A25] via-[#4A1219] to-[#33090F]">
+    <div
+      className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 bg-[#33090F]"
+      style={{
+        backgroundImage:
+          "linear-gradient(rgba(42, 7, 13, 0.25), rgba(30, 5, 10, 0.42)), url('/assets/aistudio/FCAT_Background_9d8d0c62.png')",
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        backgroundAttachment: 'fixed',
+      }}
+    >
       <div
         role="dialog"
         aria-modal="true"
