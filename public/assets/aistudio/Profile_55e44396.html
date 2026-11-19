@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <?!= include('NavBar'); ?>
+  <?!= include('ClientHelpers'); ?>
+
+  <script>
+    if(requireLogin()){
+      const u = getUser();
+      renderNav('profile');
+      document.getElementById('page-content').innerHTML = `
+        <div class="card">
+          <h2>My Profile</h2>
+          <div class="grid-2">
+            <div><label>Full Name</label><input type="text" value="${escapeHtml(u.name || '')}" disabled></div>
+            <div><label>Email</label><input type="text" value="${escapeHtml(u.email || '')}" disabled></div>
+          </div>
+          <div class="grid-2">
+            <div><label>Department</label><input type="text" value="${escapeHtml(u.department || '')}" disabled></div>
+            <div><label>Position</label><input type="text" value="${escapeHtml(u.position || '')}" disabled></div>
+          </div>
+          <div><label>Role</label><input type="text" value="${escapeHtml(roleLabel_(u.role))}" disabled></div>
+          <p class="muted">To update your name, department, or position, contact your administrator.</p>
+        </div>
+
+        <div class="card">
+          <h3>Change Password</h3>
+          <label>Current Password <span class="req">*</span></label>
+          <input type="password" id="oldPw">
+          <label>New Password <span class="req">*</span></label>
+          <input type="password" id="newPw" placeholder="min 8 characters">
+          <label>Confirm New Password <span class="req">*</span></label>
+          <input type="password" id="confirmPw">
+          <button class="btn btn-primary" style="margin-top:16px;" id="changePwBtn" onclick="changePassword()">Update Password</button>
+        </div>
+      `;
+    }
+
+    function changePassword(){
+      const oldPw = document.getElementById('oldPw').value;
+      const newPw = document.getElementById('newPw').value;
+      const confirmPw = document.getElementById('confirmPw').value;
+      if(!oldPw || !newPw || !confirmPw){ showToast('Please fill in all fields.', 'error'); return; }
+      if(newPw !== confirmPw){ showToast('New passwords do not match.', 'error'); return; }
+      if(newPw.length < 8){ showToast('New password must be at least 8 characters.', 'error'); return; }
+
+      const btn = document.getElementById('changePwBtn');
+      if(btn.disabled) return; // guard against double-submit
+      const original = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Updating...';
+
+      callServer('changeMyPassword', getToken(), oldPw, newPw).then(res => {
+        if(res.ok){
+          showToast('Password updated.', 'success');
+          document.getElementById('oldPw').value = document.getElementById('newPw').value = document.getElementById('confirmPw').value = '';
+        } else {
+          showToast(res.error, 'error');
+        }
+      }).catch(() => {
+        // callServer already shows a specific error toast.
+      }).finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      });
+    }
+  </script>
+</body>
+</html>

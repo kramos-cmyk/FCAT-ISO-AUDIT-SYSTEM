@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <?!= include('NavBar'); ?>
+  <?!= include('ClientHelpers'); ?>
+
+  <script>
+    if(requireLogin()){
+      renderNav('settings');
+      buildSettingsPage();
+    }
+
+    function buildSettingsPage(){
+      const u = getUser();
+      document.getElementById('page-content').innerHTML = `
+        <div class="card">
+          <h2>Settings</h2>
+          <label>Full Name</label>
+          <input type="text" value="${escapeHtml(u.name || '')}" disabled>
+          <label>Notify me by email when a record is flagged</label>
+          <select id="s_notify" disabled>
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+          <button class="btn btn-primary" style="margin-top:16px;" id="saveSettingsBtn" onclick="saveSettings()" disabled>Save Settings</button>
+        </div>
+        <div class="card">
+          <h3>Account</h3>
+          <div class="grid-2">
+            <div><label>Email</label><input type="text" value="${escapeHtml(u.email || '')}" disabled></div>
+            <div><label>Role</label><input type="text" value="${escapeHtml(roleLabel_(u.role))}" disabled></div>
+          </div>
+          <div class="grid-2">
+            <div><label>Department</label><input type="text" value="${escapeHtml(u.department || '')}" disabled></div>
+            <div><label>Position</label><input type="text" value="${escapeHtml(u.position || '')}" disabled></div>
+          </div>
+          <p class="muted" style="margin-top:14px;">Manage your password from the <a data-page="profile" href="#">My Profile</a> page.</p>
+          <p class="muted">To lock/unlock accounts, an Auditor Account can do so from User Management.</p>
+        </div>
+      `;
+      wireInternalLinks();
+      loadSettings();
+    }
+
+    function loadSettings(){
+      const select = document.getElementById('s_notify');
+      const btn = document.getElementById('saveSettingsBtn');
+      callServer('getSettings', getToken()).then(s => {
+        const key = 'NotifyOnFlag_' + getUser().userId;
+        if(s && s[key] !== undefined) select.value = String(s[key]);
+        select.disabled = false;
+        btn.disabled = false;
+      }).catch(() => {
+        // callServer already surfaces an error toast (e.g. session expired).
+        // Leave the control disabled rather than letting the user save over
+        // a setting we were never actually able to read.
+        showToast('Could not load your settings. Please refresh the page.', 'error');
+      });
+    }
+
+    function saveSettings(){
+      const btn = document.getElementById('saveSettingsBtn');
+      if(btn.disabled) return; // guard against double-submit while a save is already in flight
+      const original = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Saving...';
+
+      const updates = {};
+      updates['NotifyOnFlag_' + getUser().userId] = document.getElementById('s_notify').value;
+      callServer('updateSettings', getToken(), updates).then(() => {
+        showToast('Settings saved.', 'success');
+      }).catch(() => {
+        // callServer already shows a specific error toast.
+      }).finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      });
+    }
+  </script>
+</body>
+</html>

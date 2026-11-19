@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <?!= include('NavBar'); ?>
+  <?!= include('ClientHelpers'); ?>
+
+  <script>
+    if(requireLogin() && requireRole('Admin')){
+      renderNav('overview');
+      buildPage();
+    }
+    let allRecords = [];
+    let allDepartments = [];
+
+    function buildPage(){
+      document.getElementById('page-content').innerHTML = `
+        <div class="card">
+          <h2 style="margin-top:0;">Overview</h2>
+          <div class="kpi-grid" id="kpiGrid"></div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <h2 style="margin:0;">By Department</h2>
+            <select id="deptKpiFilter" onchange="renderDeptKpis()">
+              <option value="">All departments</option>
+            </select>
+          </div>
+          <div id="deptKpiTable" class="table-scroll" style="margin-top:14px;">Loading...</div>
+        </div>
+      `;
+      loadData();
+    }
+
+    function loadData(){
+      const recPromise = callServer('getAllCARs', getToken());
+      const deptPromise = callServer('getDepartmentList', getToken()).catch(() => []);
+      Promise.all([recPromise, deptPromise]).then(([rows, depts]) => {
+        allRecords = rows;
+        allDepartments = depts || [];
+        populateDeptFilter_();
+        renderKpis();
+        renderDeptKpis();
+      }).catch(err => {
+        document.getElementById('kpiGrid').innerHTML = '';
+        document.getElementById('deptKpiTable').innerHTML =
+          '<div class="empty-state">Could not load overview data. Please refresh the page.</div>';
+        console.error('loadData failed:', err);
+      });
+    }
+
+    function populateDeptFilter_(){
+      // Include any department that appears on a record even if no current
+      // user belongs to it anymore, so nothing silently disappears from the filter.
+      const depts = Array.from(new Set(allDepartments.concat(allRecords.map(r => r.Department).filter(Boolean)))).sort();
+      const opts = '<option value="">All departments</option>' + depts.map(d => '<option value="'+escapeHtml(d)+'">'+escapeHtml(d)+'</option>').join('');
+      const f = document.getElementById('deptKpiFilter');
+      if(f) f.innerHTML = opts;
+    }
+
+    function renderDeptKpis(){
+      const box = document.getElementById('deptKpiTable');
+      if(!box) return;
+      const filterVal = document.getElementById('deptKpiFilter') ? document.getElementById('deptKpiFilter').value : '';
+      const depts = Array.from(new Set(allDepartments.concat(allRecords.map(r => r.Department).filter(Boolean))))
+        .filter(d => !filterVal || d === filterVal)
+        .sort();
+
+      if(depts.length === 0){
+        box.innerHTML = '<div class="empty-state">No departments found.</div>';
+        return;
+      }
+
+      let html = '<table><thead><tr><th>Department</th><th>Total</th><th>Open</th><th>Needs Attention</th><th>Overdue</th><th>Closed</th><th>Closure Rate</th></tr></thead><tbody>';
+      const todayStart = new Date(new Date().toDateString());
+      depts.forEach(d => {
+        const rows = allRecords.filter(r => r.Department === d);
+        const total = rows.length;
+        const closed = rows.filter(r => r.Status === 'Closed').length;
+        const flagged = rows.filter(r => r.AdminFlag === 'Needs Attention').length;
+        const open = rows.filter(r => r.Status === 'Open' && r.AdminFlag !== 'Needs Attention').length;
+        const overdue = rows.filter(r => r.Status !== 'Closed' && r.AdminDeadline && new Date(r.AdminDeadline) < todayStart).length;
+        const closureRate = total ? Math.round((closed / total) * 100) : 0;
+        html += '<tr>'
+          + '<td>'+escapeHtml(d)+'</td>'
+          + '<td>'+total+'</td>'
+          + '<td>'+open+'</td>'
+          + '<td>'+(flagged > 0 ? '<span style="color:#8A6D00;font-weight:700;">'+flagged+'</span>' : flagged)+'</td>'
+          + '<td>'+(overdue > 0 ? '<span style="color:#B3261E;font-weight:700;">'+overdue+'</span>' : overdue)+'</td>'
+          + '<td>'+closed+'</td>'
+          + '<td>'+closureRate+'%</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      box.innerHTML = html;
+    }
+
+    function renderKpis(){
+      const grid = document.getElementById('kpiGrid');
+      if(!grid) return;
+      const total = allRecords.length;
+      const closed = allRecords.filter(r => r.Status === 'Closed').length;
+      const flagged = allRecords.filter(r => r.AdminFlag === 'Needs Attention').length;
+      const open = allRecords.filter(r => r.Status === 'Open' && r.AdminFlag !== 'Needs Attention').length;
+      const closureRate = total ? Math.round((closed / total) * 100) : 0;
+
+      const closedWithDates = allRecords.filter(r => r.Status === 'Closed' && r.CreatedAt && r.UpdatedAt);
+      let avgDays = '\u2014';
+      if(closedWithDates.length){
+        const totalDays = closedWithDates.reduce((sum, r) => {
+          const days = (new Date(r.UpdatedAt) - new Date(r.CreatedAt)) / 86400000;
+          return sum + (isFinite(days) && days >= 0 ? days : 0);
+        }, 0);
+        avgDays = (totalDays / closedWithDates.length).toFixed(1);
+      }
+
+      const now = new Date();
+      const newThisMonth = allRecords.filter(r => {
+        const d = new Date(r.CreatedAt);
+        return !isNaN(d) && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      }).length;
+      const todayStart = new Date(now.toDateString());
+      const overdue = allRecords.filter(r => r.Status !== 'Closed' && r.AdminDeadline && new Date(r.AdminDeadline) < todayStart).length;
+
+      const cards = [
+        ['Total Records', total, ''],
+        ['Open', open, 'open'],
+        ['Needs Attention', flagged, 'attention'],
+        ['Overdue', overdue, overdue > 0 ? 'open' : ''],
+        ['Closed', closed, 'closed'],
+        ['Closure Rate', closureRate + '%', ''],
+        ['Avg. Days to Close', avgDays, ''],
+        ['New This Month', newThisMonth, '']
+      ];
+      grid.innerHTML = cards.map(([label, val, cls]) =>
+        '<div class="kpi-card'+(cls ? ' kpi-'+cls : '')+'"><div class="kpi-value">'+val+'</div><div class="kpi-label">'+escapeHtml(label)+'</div></div>'
+      ).join('');
+    }
+  </script>
+</body>
+</html>

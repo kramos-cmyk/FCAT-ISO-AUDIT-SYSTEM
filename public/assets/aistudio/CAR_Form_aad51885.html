@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <?!= include('NavBar'); ?>
+  <?!= include('ClientHelpers'); ?>
+
+  <script>
+    var CAR_PARAM = <?!= JSON.stringify(carParam || '') ?>;
+
+    let evidenceLinksExisting = []; // general evidence URLs already on the record
+    let pendingEvidenceFiles = [];  // newly selected general evidence, not yet uploaded
+    let editRecord = null;
+    let departmentList = [];
+    let processOwnerList = [];
+    let followUpEntries = [];
+
+    const FACTORS = ['Man', 'Method', 'Machine', 'Material', 'Environment'];
+    const CAR_HEADER_IMAGE = 'https://drive.google.com/thumbnail?id=18WDJ733w71STOwp88zv4bI6YYpYvY-00&sz=w1200';
+
+    if(requireLogin()){
+      renderNav('form');
+      startForm();
+    }
+
+    function startForm(){
+      const u = getUser();
+      // Only Auditors raise new findings - Process Owners act on findings
+      // already routed to their department, they don't create blank ones.
+      if(!CAR_PARAM && u.role !== 'Admin'){
+        showToast('Only Auditors can raise a new finding. Open an existing record from your department list to work on it.', 'error');
+        goTo('employee');
+        return;
+      }
+
+      document.getElementById('page-content').innerHTML = '<div class="card"><div class="empty-state">Loading...</div></div>';
+      const deptPromise = callServer('getDepartmentList', getToken()).catch(() => []);
+      const ownerPromise = u.role === 'Admin' ? callServer('getProcessOwners', getToken()).catch(() => []) : Promise.resolve([]);
+      const recPromise = CAR_PARAM ? callServer('getCAR', getToken(), CAR_PARAM) : Promise.resolve(null);
+
+      Promise.all([deptPromise, ownerPromise, recPromise]).then(([depts, owners, rec]) => {
+        departmentList = depts || [];
+        processOwnerList = owners || [];
+        if(CAR_PARAM && !rec){ showToast('Record not found.', 'error'); goTo(getUser().role==='Admin'?'admin':'employee'); return; }
+        if(rec){
+          editRecord = rec;
+
+          try { evidenceLinksExisting = rec.EvidenceLinks ? (JSON.parse(rec.EvidenceLinks) || []) : []; }
+          catch(e){ evidenceLinksExisting = []; }
+          // Migrate a pre-existing single evidence link into the array, once, so nothing is lost.
+          if(rec.EvidenceLink && evidenceLinksExisting.indexOf(rec.EvidenceLink) === -1){
+            evidenceLinksExisting.push(rec.EvidenceLink);
+          }
+
+          try { followUpEntries = rec.FollowUpEntries ? (JSON.parse(rec.FollowUpEntries) || []) : []; }
+          catch(e){ followUpEntries = []; }
+          // Migrate a pre-existing single follow-up into the history, once.
+          if(followUpEntries.length === 0 && rec.FollowUpDate){
+            followUpEntries = [{ FollowUpDate: rec.FollowUpDate, ResultOfVerification: rec.ResultOfVerification,
+              VerifiedBy: rec.VerifiedBy, ConformedBy: rec.ConformedBy, CreatedAt: rec.UpdatedAt || rec.CreatedAt }];
+          }
+        }
+        buildForm();
+      }).catch(() => {
+        showToast('Could not load this form.', 'error');
+        goTo(u.role === 'Admin' ? 'admin' : 'employee');
+      });
+    }
+
+    function ev(field){ return editRecord ? escapeHtml(editRecord[field] || '') : ''; }
+
+    function updateDetailsRequirement() {
+      const typeVal = document.getElementById('f_Type') ? document.getElementById('f_Type').value : '';
+      const isOFI = (typeVal === 'Opportunity for Improvement (OFI)');
+      const reqStar = document.getElementById('req_Details');
+      const errEl = document.getElementById('err_Details');
+      const el = document.getElementById('f_Details');
+      
+      if (reqStar) {
+        reqStar.style.display = isOFI ? 'none' : 'inline';
+      }
+      if (isOFI && el && errEl) {
+        el.classList.remove('invalid');
+        errEl.style.display = 'none';
+      }
+    }
+
+    function buildForm(){
+      const u = getUser();
+      const rec = editRecord;
+      const isAuditor = u.role === 'Admin';
+      const deptOptions = departmentList.slice();
+      if(rec && rec.Department && deptOptions.indexOf(rec.Department) === -1) deptOptions.push(rec.Department);
+      const lock = isAuditor ? '' : 'disabled';
+      const poReq = isAuditor ? '' : '<span class="req">*</span>';
+
+      document.getElementById('page-content').innerHTML = `
+        <img src="${CAR_HEADER_IMAGE}" alt="Official CAR Header" style="max-width:100%;display:block;margin:0 auto 18px;border-radius:8px;">
+        ${rec && rec.AdminFlag === 'Needs Attention' ? `
+        <div class="card" style="border-left:4px solid #8A6D00;">
+          <div class="locked-note" style="margin-bottom:0;">
+            <strong>This record was flagged by an Auditor:</strong> ${escapeHtml(rec.AdminNote || '')}
+            <br>Update the details below and save to resubmit - this will clear the flag.
+          </div>
+        </div>` : ''}
+        <div class="card">
+          <p class="muted">Based on FO-RI-05 Corrective Action Report. Fields marked <span class="req">*</span> are required.
+             ${rec ? ' CAR No. <strong>'+escapeHtml(rec.CARNo)+'</strong>.' : ''}</p>
+
+          <!-- SECTION 1 -->
+          <div class="section-title">1. Finding Details${!isAuditor ? ' (set by Auditor)' : ''}</div>
+          <div class="section-body">
+            ${!isAuditor ? '<p class="muted" style="margin-top:0;">These fields were set by the Auditor who raised this finding and can\'t be changed here.</p>' : ''}
+            ${isAuditor ? `
+            <div class="grid-2">
+              <div><label>Raised By (Auditor)</label><input type="text" value="${escapeHtml(rec ? (rec.RaisedBy || u.name) : u.name)}" disabled></div>
+              <div>
+                <label>Received By <span class="muted" style="font-weight:400;">(optional - leave blank for department-wide)</span></label>
+                <select id="f_EmployeeID">
+                  <option value="">-- Unassigned (anyone in department) --</option>
+                </select>
+              </div>
+            </div>
+            ` : (rec ? `
+            <div class="grid-2">
+              <div><label>Raised By (Auditor)</label><input type="text" value="${escapeHtml(rec.RaisedBy || '\u2014')}" disabled></div>
+              <div><label>Received By</label><input type="text" value="${rec.EmployeeName && rec.EmployeeName !== '(Unassigned)' ? escapeHtml(rec.EmployeeName) : 'Unclaimed'}" disabled></div>
+            </div>
+            ` : '')}
+            ${!rec ? `
+            <label>CAR No. <span class="muted" style="font-weight:400;">(optional - auto-generated if left blank)</span></label>
+            <input type="text" id="f_CARNo" placeholder="e.g. CAR-2026-001" maxlength="40" ${lock}>
+            <div class="field-error" id="err_CARNo"></div>
+            <p class="muted" style="margin-top:2px;">Once saved, the CAR No. can't be changed - it's referenced by comments, evidence, and notifications tied to this record.</p>
+            ` : ''}
+            <div class="grid-2">
+              <div>
+                <label>Type of Finding <span class="req">*</span></label>
+                <select id="f_Type" onchange="updateDetailsRequirement()" ${lock}>
+                  <option value="">-- Select --</option>
+                  <option value="Nonconformity (NC)" ${ev('Type')==='Nonconformity (NC)'?'selected':''}>Nonconformity (NC)</option>
+                  <option value="Opportunity for Improvement (OFI)" ${ev('Type')==='Opportunity for Improvement (OFI)'?'selected':''}>Opportunity for Improvement (OFI)</option>
+                </select>
+                <div class="field-error" id="err_Type"></div>
+              </div>
+              <div>
+                <label>Source of Incident / Nonconformity <span class="req">*</span></label>
+                <select id="f_Source" ${lock}>
+                  <option value="">-- Select --</option>
+                  <option ${ev('Source')==='Internal Audit'?'selected':''}>Internal Audit</option>
+                  <option ${ev('Source')==='External Audit'?'selected':''}>External Audit</option>
+                  <option ${ev('Source')==='Customer Complaint'?'selected':''}>Customer Complaint</option>
+                  <option ${ev('Source')==='Unmet KPIs'?'selected':''}>Unmet KPIs</option>
+                  <option ${ev('Source')==='Nonconforming Output/Services'?'selected':''}>Nonconforming Output/Services</option>
+                  <option ${ev('Source')==='Others'?'selected':''}>Others</option>
+                </select>
+                <div class="field-error" id="err_Source"></div>
+              </div>
+            </div>
+            <div class="grid-2">
+              <div>
+                <label>Department / Process <span class="req">*</span></label>
+                <select id="f_Department" onchange="refreshReceivedByOptions_()" ${lock}>
+                  <option value="">-- Select department --</option>
+                  ${deptOptions.map(d => '<option value="'+escapeHtml(d)+'" '+(ev('Department')===d?'selected':'')+'>'+escapeHtml(d)+'</option>').join('')}
+                </select>
+                <div class="field-error" id="err_Department"></div>
+              </div>
+              <div>
+                <label>Date Issued <span class="req">*</span></label>
+                <input type="date" id="f_DateIssued" value="${ev('DateIssued')}" ${lock}>
+                <div class="field-error" id="err_DateIssued"></div>
+              </div>
+            </div>
+            <div class="grid-2">
+              <div>
+                <label>ISO 9001 Clause</label>
+                <input type="text" id="f_ISOClause" placeholder="e.g. 8.5.1" value="${ev('ISOClause')}" ${lock}>
+              </div>
+              <div>
+                <label>Related Company Document</label>
+                <input type="text" id="f_CompanyDocument" placeholder="e.g. FO-RI-05" value="${ev('CompanyDocument')}" ${lock}>
+              </div>
+            </div>
+            <label>Details of Incident or Nonconformity <span class="req" id="req_Details">*</span></label>
+            <textarea id="f_Details" rows="3" placeholder="Describe what happened..." ${lock}>${ev('Details')}</textarea>
+            <div class="field-error" id="err_Details"></div>
+          </div>
+
+          <!-- SECTION 2 -->
+          <div class="section-title">2. Correction (Immediate Action Taken) ${poReq}</div>
+          <div class="section-body">
+            <p class="muted" style="margin-top:0;">Add a row for each correction taken. At least one is required.</p>
+            <div class="table-scroll">
+              <table style="min-width:560px;">
+                <thead><tr><th>Correction</th><th>Date Completed</th><th>Person In-Charge</th><th>Result</th><th></th></tr></thead>
+                <tbody id="correctionTableBody"></tbody>
+              </table>
+            </div>
+            <button type="button" class="btn btn-outline" style="margin-top:10px;" onclick="addCorrectionRow()">+ Add Correction</button>
+            <input type="hidden" id="f_CorrectionEntries">
+            <div class="field-error" id="err_CorrectionEntries"></div>
+          </div>
+
+          <!-- SECTION 3 -->
+          <div class="section-title">3. Root Cause Analysis</div>
+          <div class="section-body">
+            <label>5 Whys Analysis by Contributing Factors (Saved to CAR_WhyWhy sheet)</label>
+            <div style="overflow-x:auto;margin-bottom:12px;">
+              <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <thead>
+                  <tr>
+                    <th style="width:110px;">Factor</th>
+                    <th>Why 1</th>
+                    <th>Why 2</th>
+                    <th>Why 3</th>
+                    <th>Why 4</th>
+                    <th>Why 5</th>
+                  </tr>
+                </thead>
+                <tbody id="whyTableBody"></tbody>
+              </table>
+            </div>
+            <input type="hidden" id="f_RootCauseFactors">
+
+            <label>Possible Root Cause(s) ${poReq}</label>
+            <p class="muted" style="margin-top:0;">Add one entry per possible root cause. At least one is required.</p>
+            <div id="rootCauseList"></div>
+            <button type="button" class="btn btn-outline" onclick="addRootCauseRow()">+ Add Possible Root Cause</button>
+            <input type="hidden" id="f_PossibleRootCauseEntries">
+            <div class="field-error" id="err_PossibleRootCauseEntries"></div>
+            <div class="grid-2" style="margin-top:14px;">
+              <div>
+                <label>Validation Method ${poReq}</label>
+                <input type="text" id="f_ValidationMethod" value="${ev('ValidationMethod')}">
+                <div class="field-error" id="err_ValidationMethod"></div>
+              </div>
+              <div>
+                <label>Validation Date ${poReq}</label>
+                <input type="date" id="f_ValidationDate" value="${ev('ValidationDate')}">
+                <div class="field-error" id="err_ValidationDate"></div>
+              </div>
+            </div>
+            <label>Results of Validation ${poReq}</label>
+            <input type="text" id="f_ValidationResult" value="${ev('ValidationResult')}">
+            <div class="field-error" id="err_ValidationResult"></div>
+          </div>
+
+          <!-- SECTION 4 -->
+          <div class="section-title">4. Corrective Action Plan ${poReq}</div>
+          <div class="section-body">
+            <label>True Root Cause ${poReq}</label>
+            <textarea id="f_TrueRootCause" rows="2">${ev('TrueRootCause')}</textarea>
+            <div class="field-error" id="err_TrueRootCause"></div>
+            <p class="muted" style="margin-top:10px;">Add a row for each corrective action. At least one is required.</p>
+            <div class="table-scroll">
+              <table style="min-width:560px;">
+                <thead><tr><th>Corrective Action</th><th>Person In-Charge / Target Date</th><th>Date Implemented</th><th></th></tr></thead>
+                <tbody id="correctiveActionTableBody"></tbody>
+              </table>
+            </div>
+            <button type="button" class="btn btn-outline" style="margin-top:10px;" onclick="addCorrectiveActionRow()">+ Add Corrective Action</button>
+            <input type="hidden" id="f_CorrectiveActionEntries">
+            <div class="field-error" id="err_CorrectiveActionEntries"></div>
+          </div>
+
+          <!-- SECTION 5 -->
+          <div class="section-title">5. General Evidence / Record ${poReq}</div>
+          <div class="section-body">
+            <div class="filebox" id="fileBox" onclick="document.getElementById('fileInput').click()">
+              Click to attach one or more evidence files (photos, documents, scanned approvals). Max 15MB each.
+            </div>
+            <input type="file" id="fileInput" multiple style="display:none" onchange="handleEvidenceFiles(event)">
+            <div id="evidenceList" style="margin-top:10px;"></div>
+            <div class="field-error" id="err_Evidence"></div>
+          </div>
+
+          <!-- SECTION 6 -->
+          <div class="section-title">6. Sign-off</div>
+          <div class="section-body">
+            <div class="grid-2">
+              <div>
+                <label>Prepared By (Process Owner) ${poReq}</label>
+                <input type="text" id="f_PreparedBy" value="${ev('PreparedBy')}">
+                <div class="field-error" id="err_PreparedBy"></div>
+              </div>
+              <div>
+                <label>Date Prepared ${poReq}</label>
+                <input type="date" id="f_PreparedDate" value="${ev('PreparedDate')}">
+                <div class="field-error" id="err_PreparedDate"></div>
+              </div>
+            </div>
+            <div class="grid-2">
+              <div>
+                <label>Approved By (Immediate Head) ${poReq}</label>
+                <input type="text" id="f_ApprovedBy" value="${ev('ApprovedBy')}">
+                <div class="field-error" id="err_ApprovedBy"></div>
+              </div>
+              <div>
+                <label>Date Approved ${poReq}</label>
+                <input type="date" id="f_ApprovedDate" value="${ev('ApprovedDate')}">
+                <div class="field-error" id="err_ApprovedDate"></div>
+              </div>
+            </div>
+            <div class="grid-2">
+              <div>
+                <label>Conformed By ${poReq}</label>
+                <input type="text" id="f_SignOffConformedBy" value="${ev('SignOffConformedBy')}" placeholder="Conformed by">
+                <div class="field-error" id="err_SignOffConformedBy"></div>
+              </div>
+              <div>
+                <label>Date Conformed ${poReq}</label>
+                <input type="date" id="f_SignOffConformedDate" value="${ev('SignOffConformedDate')}">
+                <div class="field-error" id="err_SignOffConformedDate"></div>
+              </div>
+            </div>
+          </div>
+
+          ${u.role === 'Admin' && rec ? `
+          <!-- SECTION 8 (Auditor only) -->
+          <div class="section-title">7. Auditor Follow-up / Verification (Auditor Only)</div>
+          <div class="section-body">
+            <p class="muted" style="margin-top:0;">Each follow-up is kept permanently as a history - adding a new one never replaces a previous check-in.</p>
+            <div id="followUpHistory"></div>
+            <div style="margin-top:16px;padding-top:16px;border-top:1.5px solid var(--line);">
+              <p style="font-weight:700;color:var(--maroon-dark);margin:0 0 8px;">Add Follow-up</p>
+              <div class="grid-2">
+                <div><label>Follow-up Date</label><input type="date" id="nf_FollowUpDate"></div>
+                <div><label>Verified By</label><input type="text" id="nf_VerifiedBy"></div>
+              </div>
+              <label>Result of Verification</label>
+              <textarea id="nf_ResultOfVerification" rows="2"></textarea>
+              <label>Conformed By</label>
+              <input type="text" id="nf_ConformedBy">
+              <button type="button" class="btn btn-primary" id="addFollowUpBtn" style="margin-top:10px;" onclick="submitFollowUp()">Add Follow-up</button>
+            </div>
+          </div>` : ''}
+          ${u.role === 'Admin' && !rec ? `
+          <div class="card" style="margin-top:0;background:var(--bg);">
+            <p class="muted" style="margin:0;">Auditor Follow-up / Verification becomes available once this finding has been saved.</p>
+          </div>` : ''}
+
+          <div style="margin-top:24px;display:flex;gap:12px;">
+            <button class="btn btn-primary" id="submitBtn" onclick="submitForm()">${rec ? 'Save Changes' : 'Save Record'}</button>
+            <a data-page="${u.role==='Admin'?'admin':'employee'}" href="#" class="btn btn-outline">Cancel</a>
+          </div>
+        </div>
+      `;
+      wireInternalLinks();
+      buildWhyGrid();
+      buildCorrectionTable_();
+      buildRootCauseList_();
+      buildCorrectiveActionTable_();
+      renderEvidenceList_();
+      renderFollowUpHistory_();
+      refreshReceivedByOptions_();
+      updateDetailsRequirement();
+    }
+
+    function buildWhyGrid() {
+      const tbody = document.getElementById('whyTableBody');
+      if(!tbody) return;
+      
+      let existing = {};
+      if (editRecord && editRecord.RootCauseFactors) {
+        try {
+          existing = typeof editRecord.RootCauseFactors === 'string' 
+            ? JSON.parse(editRecord.RootCauseFactors) 
+            : editRecord.RootCauseFactors;
+        } catch(e) {
+          existing = {};
+        }
+      }
+
+      let html = '';
+      FACTORS.forEach(factor => {
+        const whys = (existing && Array.isArray(existing[factor])) ? existing[factor] : ['', '', '', '', ''];
+        html += '<tr><td><strong>' + factor + '</strong></td>';
+        for(let i = 0; i < 5; i++) {
+          const val = escapeHtml(whys[i] || '');
+          html += '<td><input type="text" class="why-input" data-factor="' + factor + '" data-index="' + i + '" value="' + val + '" placeholder="Why ' + (i+1) + '" style="font-size:12px;padding:5px;width:100%;"></td>';
+        }
+        html += '</tr>';
+      });
+      tbody.innerHTML = html;
+    }
+
+    function syncWhyGridData() {
+      const data = {};
+      FACTORS.forEach(f => data[f] = ['', '', '', '', '']);
+      document.querySelectorAll('.why-input').forEach(inp => {
+        const factor = inp.dataset.factor;
+        const idx = parseInt(inp.dataset.index, 10);
+        data[factor][idx] = inp.value.trim();
+      });
+      const hiddenInput = document.getElementById('f_RootCauseFactors');
+      if(hiddenInput) hiddenInput.value = JSON.stringify(data);
+    }
+
+    // ---- Section 1: Received By dropdown (Auditor only), filtered by selected Department ----
+    function refreshReceivedByOptions_(){
+      const sel = document.getElementById('f_EmployeeID');
+      if(!sel) return; // not rendered for Process Owners
+      const deptSel = document.getElementById('f_Department');
+      const currentDept = deptSel ? deptSel.value : '';
+      const preselect = editRecord ? editRecord.EmployeeID : '';
+      const keepSelected = sel.value || preselect;
+
+      const filtered = currentDept
+        ? processOwnerList.filter(p => p.department.split(',').map(d => d.trim()).indexOf(currentDept) > -1)
+        : processOwnerList;
+
+      sel.innerHTML = '<option value="">-- Unassigned (anyone in department) --</option>'
+        + filtered.map(p => '<option value="'+escapeHtml(p.userId)+'">'+escapeHtml(p.name)+' ('+escapeHtml(p.department)+')</option>').join('');
+
+      if(keepSelected && filtered.some(p => p.userId === keepSelected)) sel.value = keepSelected;
+    }
+
+    // ---- Section 2: Correction (repeatable table) ----
+    function correctionRowHtml_(entry){
+      entry = entry || {};
+      return '<tr>'
+        + '<td style="min-width:170px;"><input type="text" class="correction-field" data-field="Correction" value="'+escapeHtml(entry.Correction||'')+'" placeholder="Immediate action taken"></td>'
+        + '<td><input type="date" class="correction-field" data-field="DateCompleted" value="'+escapeHtml(entry.DateCompleted||'')+'"></td>'
+        + '<td style="min-width:130px;"><input type="text" class="correction-field" data-field="PersonInCharge" value="'+escapeHtml(entry.PersonInCharge||'')+'"></td>'
+        + '<td style="min-width:130px;"><input type="text" class="correction-field" data-field="Result" value="'+escapeHtml(entry.Result||'')+'"></td>'
+        + '<td><button type="button" class="btn btn-outline" style="padding:6px 10px;font-size:12px;" onclick="this.closest(\'tr\').remove()">Remove</button></td>'
+        + '</tr>';
+    }
+    function addCorrectionRow(){
+      const tbody = document.getElementById('correctionTableBody');
+      if(tbody) tbody.insertAdjacentHTML('beforeend', correctionRowHtml_({}));
+    }
+    function buildCorrectionTable_(){
+      const tbody = document.getElementById('correctionTableBody');
+      if(!tbody) return;
+      let entries = [];
+      if(editRecord && editRecord.CorrectionEntries){
+        try { entries = JSON.parse(editRecord.CorrectionEntries) || []; } catch(e){ entries = []; }
+      }
+      // Migrate a legacy single-value record into the first row, once, so old data isn't lost.
+      if(entries.length === 0 && editRecord && editRecord.Correction){
+        entries = [{ Correction: editRecord.Correction, DateCompleted: editRecord.DateCompleted,
+                     PersonInCharge: editRecord.PersonInCharge, Result: editRecord.Result }];
+      }
+      tbody.innerHTML = entries.map(correctionRowHtml_).join('');
+    }
+    function syncCorrectionEntries(){
+      const entries = [];
+      document.querySelectorAll('#correctionTableBody tr').forEach(tr => {
+        const entry = {};
+        tr.querySelectorAll('.correction-field').forEach(inp => { entry[inp.dataset.field] = inp.value.trim(); });
+        if(Object.values(entry).some(v => v)) entries.push(entry);
+      });
+      const hidden = document.getElementById('f_CorrectionEntries');
+      if(hidden) hidden.value = JSON.stringify(entries);
+      return entries;
+    }
+
+    // ---- Section 3: Possible Root Cause(s) (repeatable list) ----
+    function rootCauseRowHtml_(text){
+      return '<div class="rootcause-row" style="display:flex;gap:8px;margin-bottom:8px;align-items:flex-start;">'
+        + '<textarea class="rootcause-field" rows="2" style="flex:1;" placeholder="Possible root cause...">'+escapeHtml(text||'')+'</textarea>'
+        + '<button type="button" class="btn btn-outline" style="padding:6px 10px;font-size:12px;" onclick="this.closest(\'.rootcause-row\').remove()">Remove</button>'
+        + '</div>';
+    }
+    function addRootCauseRow(){
+      const box = document.getElementById('rootCauseList');
+      if(box) box.insertAdjacentHTML('beforeend', rootCauseRowHtml_(''));
+    }
+    function buildRootCauseList_(){
+      const box = document.getElementById('rootCauseList');
+      if(!box) return;
+      let entries = [];
+      if(editRecord && editRecord.PossibleRootCauseEntries){
+        try { entries = JSON.parse(editRecord.PossibleRootCauseEntries) || []; } catch(e){ entries = []; }
+      }
+      if(entries.length === 0 && editRecord && editRecord.PossibleRootCause){
+        entries = [editRecord.PossibleRootCause];
+      }
+      box.innerHTML = entries.map(rootCauseRowHtml_).join('');
+    }
+    function syncRootCauseEntries(){
+      const entries = [];
+      document.querySelectorAll('.rootcause-field').forEach(t => { const v = t.value.trim(); if(v) entries.push(v); });
+      const hidden = document.getElementById('f_PossibleRootCauseEntries');
+      if(hidden) hidden.value = JSON.stringify(entries);
+      return entries;
+    }
+
+    // ---- Section 4: Corrective Action Plan (repeatable table) ----
+    function correctiveActionRowHtml_(entry){
+      entry = entry || {};
+      return '<tr>'
+        + '<td style="min-width:200px;"><textarea class="ca-field" data-field="CorrectiveAction" rows="2" placeholder="Step-by-step corrective action">'+escapeHtml(entry.CorrectiveAction||'')+'</textarea></td>'
+        + '<td style="min-width:160px;"><input type="text" class="ca-field" data-field="ActionOwnerTargetDate" placeholder="e.g. Dean Banan / Sept 30, 2026" value="'+escapeHtml(entry.ActionOwnerTargetDate||'')+'"></td>'
+        + '<td><input type="date" class="ca-field" data-field="DateImplemented" value="'+escapeHtml(entry.DateImplemented||'')+'"></td>'
+        + '<td><button type="button" class="btn btn-outline" style="padding:6px 10px;font-size:12px;" onclick="this.closest(\'tr\').remove()">Remove</button></td>'
+        + '</tr>';
+    }
+    function addCorrectiveActionRow(){
+      const tbody = document.getElementById('correctiveActionTableBody');
+      if(tbody) tbody.insertAdjacentHTML('beforeend', correctiveActionRowHtml_({}));
+    }
+    function buildCorrectiveActionTable_(){
+      const tbody = document.getElementById('correctiveActionTableBody');
+      if(!tbody) return;
+      let entries = [];
+      if(editRecord && editRecord.CorrectiveActionEntries){
+        try { entries = JSON.parse(editRecord.CorrectiveActionEntries) || []; } catch(e){ entries = []; }
+      }
+      if(entries.length === 0 && editRecord && editRecord.CorrectiveAction){
+        entries = [{ CorrectiveAction: editRecord.CorrectiveAction, ActionOwnerTargetDate: editRecord.ActionOwnerTargetDate,
+                     DateImplemented: editRecord.DateImplemented }];
+      }
+      tbody.innerHTML = entries.map(correctiveActionRowHtml_).join('');
+    }
+    function syncCorrectiveActionEntries(){
+      const entries = [];
+      document.querySelectorAll('#correctiveActionTableBody tr').forEach(tr => {
+        const entry = {};
+        tr.querySelectorAll('.ca-field').forEach(inp => { entry[inp.dataset.field] = inp.value.trim(); });
+        if(Object.values(entry).some(v => v)) entries.push(entry);
+      });
+      const hidden = document.getElementById('f_CorrectiveActionEntries');
+      if(hidden) hidden.value = JSON.stringify(entries);
+      return entries;
+    }
+
+    // ---- Section 5: General Evidence (multiple files) ----
+    function renderEvidenceList_(){
+      const box = document.getElementById('evidenceList');
+      if(!box) return;
+      let html = '';
+      evidenceLinksExisting.forEach((url, i) => {
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f0e6e6;">'
+          + '<a href="'+safeUrl_(url)+'" target="_blank" style="font-size:13px;">Evidence file '+(i+1)+'</a>'
+          + '<button type="button" class="btn btn-outline" style="padding:4px 9px;font-size:11.5px;" onclick="removeExistingEvidence_('+i+')">Remove</button>'
+          + '</div>';
+      });
+      pendingEvidenceFiles.forEach((f, i) => {
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f0e6e6;">'
+          + '<span style="font-size:13px;">'+escapeHtml(f.filename)+' <span class="muted">(will upload on save)</span></span>'
+          + '<button type="button" class="btn btn-outline" style="padding:4px 9px;font-size:11.5px;" onclick="removePendingEvidence_('+i+')">Remove</button>'
+          + '</div>';
+      });
+      box.innerHTML = html;
+      const fileBox = document.getElementById('fileBox');
+      if(fileBox){
+        if(evidenceLinksExisting.length || pendingEvidenceFiles.length) fileBox.classList.add('has-file');
+        else fileBox.classList.remove('has-file');
+      }
+    }
+    function removeExistingEvidence_(i){ evidenceLinksExisting.splice(i,1); renderEvidenceList_(); }
+    function removePendingEvidence_(i){ pendingEvidenceFiles.splice(i,1); renderEvidenceList_(); }
+    function handleEvidenceFiles(e){
+      const files = Array.from(e.target.files || []);
+      files.forEach(file => {
+        if(file.size > 15*1024*1024){ showToast(file.name + ' is too large (max 15MB).', 'error'); return; }
+        const reader = new FileReader();
+        reader.onload = function(){
+          pendingEvidenceFiles.push({ base64: reader.result.split(',')[1], filename: file.name, mimeType: file.type || 'application/octet-stream' });
+          renderEvidenceList_();
+          const errEl = document.getElementById('err_Evidence');
+          if(errEl) errEl.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+      });
+      e.target.value = '';
+    }
+
+    // ---- Section 8: Auditor Follow-up history ----
+    function renderFollowUpHistory_(){
+      const box = document.getElementById('followUpHistory');
+      if(!box) return;
+      if(followUpEntries.length === 0){
+        box.innerHTML = '<div class="empty-state" style="padding:14px 0;">No follow-ups recorded yet.</div>';
+        return;
+      }
+      box.innerHTML = followUpEntries.slice().reverse().map(f =>
+        '<div style="padding:10px 0;border-bottom:1px solid #f0e6e6;">'
+        + '<div class="muted" style="font-size:12px;">'+(f.CreatedAt ? fmtDateTime(f.CreatedAt) : '')+(f.AddedBy ? ' &bull; '+escapeHtml(f.AddedBy) : '')+'</div>'
+        + '<div style="margin-top:3px;"><strong>Follow-up Date:</strong> '+escapeHtml(f.FollowUpDate||'')+'</div>'
+        + '<div><strong>Result of Verification:</strong> '+escapeHtml(f.ResultOfVerification||'').replace(/\n/g,'<br>')+'</div>'
+        + '<div><strong>Verified By:</strong> '+escapeHtml(f.VerifiedBy||'')+(f.ConformedBy ? ' &bull; <strong>Conformed By:</strong> '+escapeHtml(f.ConformedBy) : '')+'</div>'
+        + '</div>'
+      ).join('');
+    }
+    function submitFollowUp(){
+      if(!editRecord) return;
+      const entry = {
+        FollowUpDate: document.getElementById('nf_FollowUpDate').value,
+        ResultOfVerification: document.getElementById('nf_ResultOfVerification').value.trim(),
+        VerifiedBy: document.getElementById('nf_VerifiedBy').value.trim(),
+        ConformedBy: document.getElementById('nf_ConformedBy').value.trim()
+      };
+      if(!entry.FollowUpDate || !entry.ResultOfVerification || !entry.VerifiedBy){
+        showToast('Follow-up date, result of verification, and verified by are required.', 'error');
+        return;
+      }
+      const btn = document.getElementById('addFollowUpBtn');
+      const original = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Adding...';
+      callServer('addFollowUp', getToken(), editRecord.CARNo, entry).then(res => {
+        if(!res || !res.ok){ showToast((res && res.error) || 'Could not add follow-up.', 'error'); return; }
+        followUpEntries = res.entries || followUpEntries.concat([entry]);
+        renderFollowUpHistory_();
+        document.getElementById('nf_FollowUpDate').value = '';
+        document.getElementById('nf_ResultOfVerification').value = '';
+        document.getElementById('nf_VerifiedBy').value = '';
+        document.getElementById('nf_ConformedBy').value = '';
+        showToast('Follow-up added.', 'success');
+      }).catch(()=>{}).finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      });
+    }
+
+    // Section 1 (Finding Details) is always required - set once by the
+    // Auditor when raising the finding.
+    const REQUIRED_BASE = [
+      ['f_Type','err_Type','Type of Finding'],
+      ['f_Source','err_Source','Source'],
+      ['f_Department','err_Department','Department / Process'],
+      ['f_DateIssued','err_DateIssued','Date Issued'],
+      ['f_Details','err_Details','Details of Incident or Nonconformity']
+    ];
+
+    // Sections 2-7 are the Process Owner's responsibility - required once
+    // they save, but not required when the Auditor first raises the finding
+    // (none of it exists yet at that point). Section 8 is never required.
+    const REQUIRED_PROCESS_OWNER = [
+      ['f_ValidationMethod','err_ValidationMethod','Validation Method'],
+      ['f_ValidationDate','err_ValidationDate','Validation Date'],
+      ['f_ValidationResult','err_ValidationResult','Results of Validation'],
+      ['f_TrueRootCause','err_TrueRootCause','True Root Cause'],
+      ['f_PreparedBy','err_PreparedBy','Prepared By'],
+      ['f_PreparedDate','err_PreparedDate','Date Prepared'],
+      ['f_ApprovedBy','err_ApprovedBy','Approved By'],
+      ['f_ApprovedDate','err_ApprovedDate','Date Approved'],
+      ['f_SignOffConformedBy','err_SignOffConformedBy','Conformed By'],
+      ['f_SignOffConformedDate','err_SignOffConformedDate','Date Conformed']
+    ];
+
+    function validateClientSide(){
+      let valid = true;
+      const isAuditor = getUser().role === 'Admin';
+      const typeVal = document.getElementById('f_Type') ? document.getElementById('f_Type').value : '';
+      const isOFI = (typeVal === 'Opportunity for Improvement (OFI)');
+      const REQUIRED = isAuditor ? REQUIRED_BASE : REQUIRED_BASE.concat(REQUIRED_PROCESS_OWNER);
+
+      REQUIRED.forEach(([fieldId, errId]) => {
+        if (fieldId === 'f_Details' && isOFI) {
+          const el = document.getElementById(fieldId);
+          const errEl = document.getElementById(errId);
+          if (el) el.classList.remove('invalid');
+          if (errEl) errEl.style.display = 'none';
+          return;
+        }
+
+        const el = document.getElementById(fieldId);
+        const errEl = document.getElementById(errId);
+        if(!el || !el.value || String(el.value).trim() === ''){
+          if(el) el.classList.add('invalid');
+          if(errEl) { errEl.textContent = 'This field is required.'; errEl.style.display = 'block'; }
+          valid = false;
+        } else {
+          el.classList.remove('invalid');
+          if(errEl) errEl.style.display = 'none';
+        }
+      });
+
+      if(!isAuditor){
+        const entryChecks = [
+          ['CorrectionEntries', syncCorrectionEntries, 'err_CorrectionEntries', 'Add at least one correction.'],
+          ['PossibleRootCauseEntries', syncRootCauseEntries, 'err_PossibleRootCauseEntries', 'Add at least one possible root cause.'],
+          ['CorrectiveActionEntries', syncCorrectiveActionEntries, 'err_CorrectiveActionEntries', 'Add at least one corrective action.']
+        ];
+        entryChecks.forEach(([name, syncFn, errId, message]) => {
+          const entries = syncFn();
+          const errEl = document.getElementById(errId);
+          if(entries.length === 0){
+            if(errEl){ errEl.textContent = message; errEl.style.display = 'block'; }
+            valid = false;
+          } else if(errEl){
+            errEl.style.display = 'none';
+          }
+        });
+      } else {
+        // Still sync so nothing already entered gets lost on save, just don't require it.
+        syncCorrectionEntries();
+        syncRootCauseEntries();
+        syncCorrectiveActionEntries();
+      }
+
+      if(!isAuditor && evidenceLinksExisting.length === 0 && pendingEvidenceFiles.length === 0){
+        const errEl = document.getElementById('err_Evidence');
+        if(errEl) {
+          errEl.textContent = 'You must attach at least one general evidence file before this can be saved.';
+          errEl.style.display = 'block';
+        }
+        valid = false;
+      } else {
+        const errEl = document.getElementById('err_Evidence');
+        if(errEl) errEl.style.display = 'none';
+      }
+
+      const carNoEl = document.getElementById('f_CARNo');
+      if(carNoEl && carNoEl.value.trim() !== ''){
+        const errEl = document.getElementById('err_CARNo');
+        if(!/^[A-Za-z0-9._-]+$/.test(carNoEl.value.trim())){
+          carNoEl.classList.add('invalid');
+          if(errEl){ errEl.textContent = 'Only letters, numbers, periods, hyphens, and underscores are allowed.'; errEl.style.display = 'block'; }
+          valid = false;
+        } else {
+          carNoEl.classList.remove('invalid');
+          if(errEl) errEl.style.display = 'none';
+        }
+      }
+
+      return valid;
+    }
+
+    function submitForm(){
+      syncWhyGridData();
+      if(!validateClientSide()){
+        showToast('Please complete all required fields and attach evidence.', 'error');
+        return;
+      }
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true;
+
+      const executeSave = (generalLinks) => {
+        const payload = {};
+        document.querySelectorAll('[id^="f_"]').forEach(el => { payload[el.id.substring(2)] = el.value; });
+
+        payload.EvidenceLinks = JSON.stringify(generalLinks || []);
+
+        if(editRecord){
+          return callServer('updateCAR', getToken(), editRecord.CARNo, payload).then(res => {
+            if(res.ok){
+              // Record is already saved at this point - don't leave the button
+              // stuck showing "Saving..." while we wait on a separate redirect.
+              btn.disabled = false;
+              btn.innerHTML = 'Save Changes';
+              showToast('Changes saved: ' + editRecord.CARNo, 'success');
+              goTo(getUser().role === 'Admin' ? 'admin' : 'employee');
+            } else {
+              showToast(res.error, 'error');
+              btn.disabled = false;
+              btn.innerHTML = 'Save Changes';
+            }
+          });
+        }
+        return callServer('submitCAR', getToken(), payload).then(res => {
+          if(res.ok){
+            // Record is already saved at this point - don't leave the button
+            // stuck showing "Saving..." while we wait on a separate redirect.
+            btn.disabled = false;
+            btn.innerHTML = 'Save Record';
+            showToast('Saved successfully: ' + res.carNo, 'success');
+            goTo(getUser().role === 'Admin' ? 'admin' : 'employee');
+          } else {
+            showToast(res.error, 'error');
+            btn.disabled = false;
+            btn.innerHTML = 'Save Record';
+          }
+        });
+      };
+
+      btn.innerHTML = '<span class="spinner"></span> Processing uploads...';
+
+      const carRef = editRecord ? editRecord.CARNo : 'PENDING';
+
+      const uploadGenAll = pendingEvidenceFiles.map(f =>
+        callServer('uploadEvidence', getToken(), carRef, f.base64, f.filename, f.mimeType)
+      );
+
+      Promise.all(uploadGenAll)
+        .then(genResults => {
+          const failed = genResults.find(r => !r || !r.ok);
+          if(failed) throw new Error(failed.error || 'General evidence upload failed');
+
+          const newLinks = genResults.map(r => r.url);
+          const allLinks = evidenceLinksExisting.concat(newLinks);
+
+          btn.innerHTML = '<span class="spinner"></span> Saving record...';
+          return executeSave(allLinks);
+        })
+        .catch(err => {
+          showToast('Could not save: ' + (err.message || err), 'error');
+          btn.disabled = false;
+          btn.innerHTML = editRecord ? 'Save Changes' : 'Save Record';
+        });
+    }
+  </script>
+</body>
+</html>

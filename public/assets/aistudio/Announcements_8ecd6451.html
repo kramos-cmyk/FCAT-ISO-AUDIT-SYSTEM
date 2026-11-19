@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <?!= include('NavBar'); ?>
+  <?!= include('ClientHelpers'); ?>
+
+  <div class="modal-bg" id="announcementModalBg">
+    <div class="modal" style="max-width:560px;">
+      <h3 id="anModalTitle">New Announcement</h3>
+      <label>Title <span class="req">*</span></label>
+      <input type="text" id="anTitle" placeholder="e.g. Scheduled system maintenance">
+      <label>Message <span class="req">*</span></label>
+      <textarea id="anMessage" rows="4" placeholder="Details for everyone to see..."></textarea>
+
+      <label>Images (optional)</label>
+      <div class="filebox" id="anImageBox" onclick="document.getElementById('anImageInput').click()">
+        Click to attach one or more images (max 8MB each)
+      </div>
+      <input type="file" id="anImageInput" accept="image/*" multiple style="display:none" onchange="handleAnnouncementImages(event)">
+      <div id="anImagePreview" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;"></div>
+
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="btn btn-outline" onclick="closeAnnouncementModal()">Cancel</button>
+        <button class="btn btn-primary" id="anSubmitBtn" onclick="submitAnnouncement()">Post Announcement</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="historyModalBg">
+    <div class="modal" style="max-width:600px;max-height:80vh;overflow-y:auto;">
+      <h3>Edit History</h3>
+      <div id="historyContent"><div class="empty-state">Loading...</div></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px;">
+        <button class="btn btn-outline" onclick="closeHistoryModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let allAnnouncements = [];
+    let pendingImages = []; // {base64, filename, mimeType, previewUrl} not-yet-uploaded, staged in the modal
+    let existingImageLinks = []; // Drive URLs already attached when editing
+    let editingAnnouncementId = null;
+
+    if(requireLogin()){
+      renderNav('announcements');
+      buildPage();
+    }
+
+    function buildPage(){
+      const isAdmin = getUser().role === 'Admin';
+      document.getElementById('page-content').innerHTML = `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h2 style="margin:0;">Announcements</h2>
+            ${isAdmin ? '<button class="btn btn-primary" onclick="openAnnouncementModal()">+ New Announcement</button>' : ''}
+          </div>
+          <p class="muted">Company-wide updates and notices posted by Auditor Accounts.</p>
+          <div id="announcementList" style="margin-top:14px;">Loading...</div>
+        </div>
+      `;
+      loadAnnouncements();
+    }
+
+    function loadAnnouncements(){
+      callServer('listAnnouncements', getToken()).then(rows => {
+        allAnnouncements = rows;
+        renderAnnouncements();
+      }).catch(err => {
+        document.getElementById('announcementList').innerHTML =
+          '<div class="empty-state">Could not load announcements. Please refresh the page.</div>';
+        console.error('loadAnnouncements failed:', err);
+      });
+    }
+
+    function renderAnnouncements(){
+      const box = document.getElementById('announcementList');
+      const isAdmin = getUser().role === 'Admin';
+
+      if(!allAnnouncements || allAnnouncements.length === 0){
+        box.innerHTML = '<div class="empty-state">No announcements yet.</div>';
+        return;
+      }
+
+      box.innerHTML = allAnnouncements.map(a => {
+        const wasEdited = a.UpdatedAt && a.CreatedAt && a.UpdatedAt !== a.CreatedAt;
+        const images = Array.isArray(a.ImageLinks) ? a.ImageLinks : [];
+        const initial = (a.PostedByName || '?').trim().charAt(0).toUpperCase();
+        const imagesHtml = images.length
+          ? '<div class="image-gallery" style="display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 4px;">'
+            + images.map(u => '<a href="'+safeUrl_(u)+'" target="_blank"><img src="'+driveImageSrc_(u)+'" style="width:130px;height:98px;object-fit:cover;"></a>').join('')
+            + '</div>'
+          : '';
+
+        return '<div class="card announcement-card" style="margin-bottom:16px;" data-announcement-id="'+a.AnnouncementID+'">'
+          + '<div style="display:flex;gap:14px;">'
+          + '<div class="avatar-circle">'+escapeHtml(initial)+'</div>'
+          + '<div style="flex:1;min-width:0;">'
+          + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">'
+          + '<h3 style="margin:0;">'+escapeHtml(a.Title)+'</h3>'
+          + (isAdmin ? '<div style="display:flex;gap:8px;white-space:nowrap;">'
+              + '<button class="btn btn-outline" style="padding:5px 10px;font-size:12px;" onclick="openAnnouncementModal(\''+a.AnnouncementID+'\')">Edit</button>'
+              + '<button class="btn btn-outline" style="padding:5px 10px;font-size:12px;" onclick="doDeleteAnnouncement(\''+a.AnnouncementID+'\')">Delete</button>'
+              + '</div>' : '')
+          + '</div>'
+          + '<p class="muted" style="margin-top:2px;">Posted by '+escapeHtml(a.PostedByName)+' &bull; '+fmtDateTime(a.CreatedAt)
+          + (wasEdited ? ' &bull; <a href="#" onclick="openHistoryModal(\''+a.AnnouncementID+'\'); return false;">Edited '+fmtDateTime(a.UpdatedAt)+'</a>' : '')
+          + '</p>'
+          + '<div>'+escapeHtml(a.Message).replace(/\n/g,'<br>')+'</div>'
+          + imagesHtml
+          + '</div></div>'
+          + '<div class="section-title" style="margin-top:18px;">Comments</div>'
+          + '<div class="section-body" id="anComments_'+a.AnnouncementID+'"><div class="empty-state">Loading comments...</div></div>'
+          + '</div>';
+      }).join('');
+
+      allAnnouncements.forEach(a => loadAnnouncementComments_(a.AnnouncementID));
+    }
+
+    // ---- Comments ----
+    function loadAnnouncementComments_(announcementId){
+      callServer('getAnnouncementComments', getToken(), announcementId).then(comments => {
+        renderAnnouncementComments_(announcementId, comments);
+      }).catch(() => {
+        const box = document.getElementById('anComments_'+announcementId);
+        if(box) box.innerHTML = '<div class="empty-state">Could not load comments.</div>';
+      });
+    }
+
+    function renderAnnouncementComments_(announcementId, comments){
+      const box = document.getElementById('anComments_'+announcementId);
+      if(!box) return;
+      const me = getUser();
+      const isAdmin = me.role === 'Admin';
+
+      let html = '';
+      if(!comments || comments.length === 0){
+        html += '<div class="empty-state" style="padding:10px 0;">No comments yet.</div>';
+      } else {
+        html += comments.map(c => {
+          const canDelete = isAdmin || c.UserID === me.userId;
+          const initial = (c.UserName || '?').trim().charAt(0).toUpperCase();
+          return '<div class="comment-item" style="display:flex;gap:10px;">'
+            + '<div class="avatar-circle sm">'+escapeHtml(initial)+'</div>'
+            + '<div style="flex:1;min-width:0;">'
+            + '<div style="display:flex;justify-content:space-between;gap:10px;">'
+            + '<strong style="font-size:13.5px;">'+escapeHtml(c.UserName)+(c.Role === 'Admin' ? ' <span class="badge neutral" style="font-size:10.5px;padding:1px 8px;">Auditor</span>' : '')+'</strong>'
+            + '<span style="white-space:nowrap;">'
+              + '<span class="muted" style="font-size:12px;">'+fmtDateTime(c.CreatedAt)+'</span>'
+              + (canDelete ? ' <a href="#" style="font-size:12px;color:#B3261E;" onclick="doDeleteAnnouncementComment_(\''+c.CommentID+'\', \''+announcementId+'\'); return false;">Delete</a>' : '')
+              + '</span>'
+            + '</div>'
+            + '<div style="margin-top:3px;">'+escapeHtml(c.Message).replace(/\n/g,'<br>')+'</div>'
+            + '</div></div>';
+        }).join('');
+      }
+
+      html += '<div class="comment-compose" style="display:flex;gap:8px;align-items:flex-start;">'
+        + '<textarea id="anCommentBox_'+announcementId+'" rows="1" placeholder="Write a comment..." style="flex:1;"></textarea>'
+        + '<button class="btn btn-primary" style="padding:9px 16px;font-size:13px;white-space:nowrap;" onclick="submitAnnouncementComment_(\''+announcementId+'\', this)">Post</button>'
+        + '</div>';
+
+      box.innerHTML = html;
+    }
+
+    function submitAnnouncementComment_(announcementId, btnEl){
+      const textarea = document.getElementById('anCommentBox_'+announcementId);
+      const msg = textarea ? textarea.value.trim() : '';
+      if(!msg){ showToast('Please enter a comment.', 'error'); return; }
+      const original = btnEl.innerHTML;
+      btnEl.disabled = true;
+      btnEl.innerHTML = '<span class="spinner"></span>';
+      callServer('addAnnouncementComment', getToken(), announcementId, msg).then(res => {
+        if(!res || !res.ok){ showToast((res && res.error) || 'Could not post comment.', 'error'); return; }
+        loadAnnouncementComments_(announcementId);
+      }).catch(()=>{}).finally(() => {
+        btnEl.disabled = false;
+        btnEl.innerHTML = original;
+      });
+    }
+
+    function doDeleteAnnouncementComment_(commentId, announcementId){
+      if(!confirm('Delete this comment?')) return;
+      callServer('deleteAnnouncementComment', getToken(), commentId).then(res => {
+        if(!res || !res.ok){ showToast((res && res.error) || 'Could not delete this comment.', 'error'); return; }
+        loadAnnouncementComments_(announcementId);
+      }).catch(()=>{});
+    }
+
+    // ---- Create / Edit modal ----
+    function openAnnouncementModal(announcementId){
+      editingAnnouncementId = announcementId || null;
+      pendingImages = [];
+      document.getElementById('anImageInput').value = '';
+
+      if(editingAnnouncementId){
+        const a = allAnnouncements.find(x => x.AnnouncementID === editingAnnouncementId);
+        document.getElementById('anModalTitle').textContent = 'Edit Announcement';
+        document.getElementById('anTitle').value = a ? a.Title : '';
+        document.getElementById('anMessage').value = a ? a.Message : '';
+        existingImageLinks = a && Array.isArray(a.ImageLinks) ? a.ImageLinks.slice() : [];
+        document.getElementById('anSubmitBtn').textContent = 'Save Changes';
+      } else {
+        document.getElementById('anModalTitle').textContent = 'New Announcement';
+        document.getElementById('anTitle').value = '';
+        document.getElementById('anMessage').value = '';
+        existingImageLinks = [];
+        document.getElementById('anSubmitBtn').textContent = 'Post Announcement';
+      }
+      renderImagePreview_();
+      document.getElementById('announcementModalBg').style.display = 'flex';
+    }
+    function closeAnnouncementModal(){
+      document.getElementById('announcementModalBg').style.display = 'none';
+    }
+
+    function handleAnnouncementImages(e){
+      const files = Array.from(e.target.files || []);
+      files.forEach(file => {
+        if(file.size > 8*1024*1024){ showToast(file.name + ' is too large (max 8MB).', 'error'); return; }
+        const reader = new FileReader();
+        reader.onload = function(){
+          pendingImages.push({
+            base64: reader.result.split(',')[1],
+            filename: file.name,
+            mimeType: file.type || 'image/jpeg',
+            previewUrl: reader.result
+          });
+          renderImagePreview_();
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function renderImagePreview_(){
+      const box = document.getElementById('anImagePreview');
+      let html = '';
+      existingImageLinks.forEach((url, i) => {
+        html += '<div style="position:relative;">'
+          + '<img src="'+driveImageSrc_(url)+'" style="width:80px;height:60px;object-fit:cover;border-radius:6px;border:1px solid #eee;">'
+          + '<button type="button" onclick="removeExistingImage_('+i+')" style="position:absolute;top:-6px;right:-6px;background:#B3261E;color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;line-height:1;">&times;</button>'
+          + '</div>';
+      });
+      pendingImages.forEach((img, i) => {
+        html += '<div style="position:relative;">'
+          + '<img src="'+img.previewUrl+'" style="width:80px;height:60px;object-fit:cover;border-radius:6px;border:1px solid #eee;">'
+          + '<button type="button" onclick="removePendingImage_('+i+')" style="position:absolute;top:-6px;right:-6px;background:#B3261E;color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;line-height:1;">&times;</button>'
+          + '</div>';
+      });
+      box.innerHTML = html;
+    }
+    function removeExistingImage_(i){ existingImageLinks.splice(i, 1); renderImagePreview_(); }
+    function removePendingImage_(i){ pendingImages.splice(i, 1); renderImagePreview_(); }
+
+    function submitAnnouncement(){
+      const title = document.getElementById('anTitle').value.trim();
+      const message = document.getElementById('anMessage').value.trim();
+      if(!title || !message){ showToast('Please fill in both the title and message.', 'error'); return; }
+
+      const btn = document.getElementById('anSubmitBtn');
+      const original = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Uploading...';
+
+      // Upload any newly-attached images first, then create/update with the full link list.
+      const uploads = pendingImages.map(img =>
+        callServer('uploadAnnouncementImage', getToken(), img.base64, img.filename, img.mimeType)
+      );
+
+      Promise.all(uploads).then(results => {
+        const failed = results.find(r => !r || !r.ok);
+        if(failed){ showToast(failed.error || 'One or more images failed to upload.', 'error'); return null; }
+        const newLinks = results.map(r => r.url);
+        const allLinks = existingImageLinks.concat(newLinks);
+
+        const call = editingAnnouncementId
+          ? callServer('updateAnnouncement', getToken(), editingAnnouncementId, title, message, allLinks)
+          : callServer('createAnnouncement', getToken(), title, message, allLinks);
+        return call;
+      }).then(res => {
+        if(!res) return; // upload failure already reported above
+        if(!res.ok){ showToast(res.error || 'Could not save announcement.', 'error'); return; }
+        showToast(editingAnnouncementId ? 'Announcement updated.' : 'Announcement posted.', 'success');
+        closeAnnouncementModal();
+        loadAnnouncements();
+      }).catch(() => {
+        showToast('Something went wrong saving this announcement.', 'error');
+      }).finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      });
+    }
+
+    function doDeleteAnnouncement(id){
+      if(!confirm('Delete this announcement? This also removes its comments and edit history.')) return;
+      callServer('deleteAnnouncement', getToken(), id).then(res => {
+        if(!res || !res.ok){ showToast((res && res.error) || 'Could not delete this announcement.', 'error'); return; }
+        allAnnouncements = allAnnouncements.filter(a => a.AnnouncementID !== id);
+        showToast('Announcement deleted.', 'success');
+        renderAnnouncements();
+      }).catch(()=>{});
+    }
+
+    // ---- Edit history ----
+    function openHistoryModal(announcementId){
+      document.getElementById('historyModalBg').style.display = 'flex';
+      document.getElementById('historyContent').innerHTML = '<div class="empty-state">Loading...</div>';
+      callServer('getAnnouncementHistory', getToken(), announcementId).then(rows => {
+        if(!rows || rows.length === 0){
+          document.getElementById('historyContent').innerHTML = '<div class="empty-state">No previous versions recorded.</div>';
+          return;
+        }
+        document.getElementById('historyContent').innerHTML = rows.map(h =>
+          '<div class="card" style="margin-bottom:10px;">'
+          + '<p class="muted" style="margin:0 0 6px;">Replaced by '+escapeHtml(h.EditedByName)+' &bull; '+fmtDateTime(h.EditedAt)+'</p>'
+          + '<strong>'+escapeHtml(h.Title)+'</strong>'
+          + '<div style="margin-top:4px;">'+escapeHtml(h.Message).replace(/\n/g,'<br>')+'</div>'
+          + '</div>'
+        ).join('');
+      }).catch(() => {
+        document.getElementById('historyContent').innerHTML = '<div class="empty-state">Could not load edit history.</div>';
+      });
+    }
+    function closeHistoryModal(){ document.getElementById('historyModalBg').style.display = 'none'; }
+  </script>
+</body>
+</html>

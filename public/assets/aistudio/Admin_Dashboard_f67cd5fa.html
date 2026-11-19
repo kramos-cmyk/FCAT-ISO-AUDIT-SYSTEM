@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <?!= include('NavBar'); ?>
+  <?!= include('ClientHelpers'); ?>
+
+  <div class="modal-bg" id="flagModalBg">
+    <div class="modal">
+      <h3>Flag record for attention</h3>
+      <p class="muted">This sends a notification to whoever is handling this record (or the whole department, if unclaimed).</p>
+      <label>CAR No.</label>
+      <input type="text" id="flagCarNo" disabled>
+      <label>Message <span class="req">*</span></label>
+      <textarea id="flagMessage" rows="3" placeholder="e.g. Please attach evidence for Step 2 approval."></textarea>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="btn btn-outline" onclick="closeFlagModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitFlag()">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="deadlineModalBg">
+    <div class="modal">
+      <h3>Set deadline</h3>
+      <p class="muted">Whoever is handling this record (or the whole department, if unclaimed) will be notified.</p>
+      <label>CAR No.</label>
+      <input type="text" id="deadlineCarNo" disabled>
+      <label>Deadline Date <span class="req">*</span></label>
+      <input type="date" id="deadlineDate">
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="btn btn-outline" onclick="closeDeadlineModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitDeadline()">Save Deadline</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    if(requireLogin() && requireRole('Admin')){
+      renderNav('admin');
+      buildPage();
+    }
+    let allRecords = [];
+    let allDepartments = [];
+
+    function buildPage(){
+      document.getElementById('page-content').innerHTML = `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h2 style="margin:0;">All Submissions</h2>
+            <div style="display:flex;gap:10px;">
+              <select id="filterDept" onchange="renderRecords()">
+                <option value="">All departments</option>
+              </select>
+              <select id="filterStatus" onchange="renderRecords()">
+                <option value="">All statuses</option>
+                <option value="Open">Open</option>
+                <option value="Closed">Closed</option>
+                <option value="Needs Attention">Needs Attention</option>
+              </select>
+              <input type="text" id="filterSearch" placeholder="Search handler / CAR no." oninput="renderRecords()">
+            </div>
+          </div>
+          <div id="recordsTable" class="table-scroll" style="margin-top:14px;">Loading...</div>
+        </div>
+      `;
+      loadRecords();
+    }
+
+    function loadRecords(){
+      const recPromise = callServer('getAllCARs', getToken());
+      const deptPromise = callServer('getDepartmentList', getToken()).catch(() => []);
+      Promise.all([recPromise, deptPromise]).then(([rows, depts]) => {
+        allRecords = rows;
+        allDepartments = depts || [];
+        populateDeptFilters_();
+        refreshRecordsUI();
+      }).catch(err => {
+        document.getElementById('recordsTable').innerHTML =
+          '<div class="empty-state">Could not load submissions. Please refresh the page.</div>';
+        console.error('loadRecords failed:', err);
+      });
+    }
+
+    function populateDeptFilters_(){
+      // Include any department that appears on a record even if no current
+      // user belongs to it anymore, so nothing silently disappears from the filter.
+      const depts = Array.from(new Set(allDepartments.concat(allRecords.map(r => r.Department).filter(Boolean)))).sort();
+      const opts = '<option value="">All departments</option>' + depts.map(d => '<option value="'+escapeHtml(d)+'">'+escapeHtml(d)+'</option>').join('');
+      const f1 = document.getElementById('filterDept');
+      if(f1) f1.innerHTML = opts;
+    }
+
+    // Re-renders the records table from the current in-memory `allRecords`,
+    // without hitting the server again. Call this after any local mutation
+    // (close/reopen/flag) instead of loadRecords().
+    function refreshRecordsUI(){
+      renderRecords();
+    }
+
+    function renderRecords(){
+      try {
+        renderRecords_();
+      } catch(err){
+        document.getElementById('recordsTable').innerHTML =
+          '<div class="empty-state">Could not display submissions (unexpected data). Please refresh.</div>';
+        console.error('renderRecords failed:', err);
+      }
+    }
+
+    function renderRecords_(){
+      const statusF = document.getElementById('filterStatus').value;
+      const deptF = document.getElementById('filterDept').value;
+      const q = document.getElementById('filterSearch').value.toLowerCase();
+      let rows = allRecords.slice();
+      if(statusF) rows = rows.filter(r => (statusF==='Needs Attention' ? r.AdminFlag==='Needs Attention' : r.Status===statusF));
+      if(deptF) rows = rows.filter(r => r.Department === deptF);
+      if(q) rows = rows.filter(r => String(r.EmployeeName||'').toLowerCase().includes(q) || String(r.CARNo||'').toLowerCase().includes(q));
+      rows.sort((a,b)=> new Date(b.CreatedAt) - new Date(a.CreatedAt));
+
+      if(rows.length === 0){
+        document.getElementById('recordsTable').innerHTML = '<div class="empty-state">No matching records.</div>';
+        return;
+      }
+      let html = '<table><thead><tr><th>CAR No.</th><th>Handled By</th><th>Dept</th><th>Type</th><th>ISO Clause</th><th>Company Document</th><th>Status</th><th>Deadline</th><th>Evidence</th><th>Actions</th></tr></thead><tbody>';
+      const todayStart = new Date(new Date().toDateString());
+      rows.forEach(r => {
+        const status = r.AdminFlag === 'Needs Attention' ? 'Needs Attention' : r.Status;
+        const isOverdue = r.Status !== 'Closed' && r.AdminDeadline && new Date(r.AdminDeadline) < todayStart;
+        const deadlineCell = r.AdminDeadline
+          ? '<span style="'+(isOverdue ? 'color:#B3261E;font-weight:700;' : '')+'">'+escapeHtml(fmtDate(r.AdminDeadline))+'</span>'
+          : '<span class="muted">\u2014</span>';
+        html += '<tr>'
+          + '<td>'+escapeHtml(r.CARNo)+'</td>'
+          + '<td>'+(r.EmployeeName && r.EmployeeName !== '(Unassigned)' ? escapeHtml(r.EmployeeName) : '<span class="muted">Unclaimed</span>')+'</td>'
+          + '<td>'+escapeHtml(r.Department)+'</td>'
+          + '<td>'+escapeHtml(r.Type)+'</td>'
+          + '<td>'+(escapeHtml(r.ISOClause || '') || '<span class="muted">\u2014</span>')+'</td>'
+          + '<td>'+(escapeHtml(r.CompanyDocument || '') || '<span class="muted">\u2014</span>')+'</td>'
+          + '<td>'+badge(status)+'</td>'
+          + '<td>'+deadlineCell+'</td>'
+          + '<td>'+(evidenceLinksOf_(r).length ? '<a href="'+evidenceLinksOf_(r)[0]+'" target="_blank">View'+(evidenceLinksOf_(r).length > 1 ? ' ('+evidenceLinksOf_(r).length+')' : '')+'</a>' : '<span style="color:#B3261E;">Missing</span>')+'</td>'
+          + '<td style="white-space:nowrap;">'
+            + '<button class="btn btn-outline" style="padding:6px 10px;font-size:12.5px;" onclick="openCarViewModal(\''+r.CARNo+'\')">View</button> '
+            + '<a data-page="form" data-car="'+r.CARNo+'" href="#" class="btn btn-primary" style="padding:6px 10px;font-size:12.5px;">Edit</a> '
+            + '<button class="btn btn-outline" style="padding:6px 10px;font-size:12.5px;" onclick="openFlagModal(\''+r.CARNo+'\')">Flag</button> '
+            + '<button class="btn btn-outline" style="padding:6px 10px;font-size:12.5px;" onclick="openDeadlineModal(\''+r.CARNo+'\', \''+(r.AdminDeadline||'')+'\')">Deadline</button> '
+            + (r.Status !== 'Closed'
+                ? '<button class="btn btn-green" style="padding:6px 10px;font-size:12.5px;" onclick="doClose(\''+r.CARNo+'\')">Close</button> '
+                : '<button class="btn btn-gold" style="padding:6px 10px;font-size:12.5px;" onclick="doReopen(\''+r.CARNo+'\')">Reopen</button> ')
+            + '<button class="btn btn-outline" style="padding:6px 10px;font-size:12.5px;" onclick="exportCarRecord(\''+r.CARNo+'\', this)">Export</button>'
+          + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      document.getElementById('recordsTable').innerHTML = html;
+      wireInternalLinks(document.getElementById('recordsTable'));
+    }
+
+    function badge(status){
+      const cls = status === 'Closed' ? 'closed' : (status === 'Needs Attention' ? 'attention' : 'open');
+      return '<span class="badge '+cls+'">'+escapeHtml(status)+'</span>';
+    }
+
+    function doClose(carNo){
+      if(!confirm('Mark '+carNo+' as Closed?')) return;
+      callServer('closeRecord', getToken(), carNo).then(res => {
+        if(!res || !res.ok){ showToast('Could not close this record.', 'error'); return; }
+        const rec = allRecords.find(r => r.CARNo === carNo);
+        if(rec) rec.Status = 'Closed';
+        showToast('Record closed.','success');
+        refreshRecordsUI();
+      }).catch(()=>{});
+    }
+
+    function doReopen(carNo){
+      if(!confirm('Reopen '+carNo+'? It will move back to Open status.')) return;
+      callServer('reopenRecord', getToken(), carNo).then(res => {
+        if(!res || !res.ok){ showToast('Could not reopen this record.', 'error'); return; }
+        const rec = allRecords.find(r => r.CARNo === carNo);
+        if(rec) rec.Status = 'Open';
+        showToast('Record reopened.','success');
+        refreshRecordsUI();
+      }).catch(()=>{});
+    }
+
+    function openFlagModal(carNo){
+      document.getElementById('flagCarNo').value = carNo;
+      document.getElementById('flagMessage').value = '';
+      document.getElementById('flagModalBg').style.display = 'flex';
+    }
+    function closeFlagModal(){ document.getElementById('flagModalBg').style.display = 'none'; }
+    function submitFlag(){
+      const carNo = document.getElementById('flagCarNo').value;
+      const msg = document.getElementById('flagMessage').value.trim();
+      if(!msg){ showToast('Please enter a message.', 'error'); return; }
+      callServer('flagRecord', getToken(), carNo, msg).then(res => {
+        if(!res || !res.ok){ showToast(res && res.error || 'Could not flag this record.', 'error'); return; }
+        const rec = allRecords.find(r => r.CARNo === carNo);
+        if(rec){ rec.AdminFlag = 'Needs Attention'; rec.AdminNote = msg; }
+        showToast('Notification sent.', 'success');
+        closeFlagModal();
+        refreshRecordsUI();
+      }).catch(()=>{});
+    }
+
+    function openDeadlineModal(carNo, currentDeadline){
+      document.getElementById('deadlineCarNo').value = carNo;
+      document.getElementById('deadlineDate').value = currentDeadline || '';
+      document.getElementById('deadlineModalBg').style.display = 'flex';
+    }
+    function closeDeadlineModal(){ document.getElementById('deadlineModalBg').style.display = 'none'; }
+    function submitDeadline(){
+      const carNo = document.getElementById('deadlineCarNo').value;
+      const deadline = document.getElementById('deadlineDate').value;
+      if(!deadline){ showToast('Please choose a date.', 'error'); return; }
+      callServer('setDeadline', getToken(), carNo, deadline).then(res => {
+        if(!res || !res.ok){ showToast((res && res.error) || 'Could not set the deadline.', 'error'); return; }
+        const rec = allRecords.find(r => r.CARNo === carNo);
+        if(rec) rec.AdminDeadline = deadline;
+        showToast('Deadline saved.', 'success');
+        closeDeadlineModal();
+        refreshRecordsUI();
+      }).catch(()=>{});
+    }
+
+  </script>
+</body>
+</html>

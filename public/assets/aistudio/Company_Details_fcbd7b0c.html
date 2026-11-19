@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <?!= include('NavBar'); ?>
+  <?!= include('ClientHelpers'); ?>
+
+  <script>
+    if(requireLogin()){
+      renderNav('company');
+      loadCompany();
+    }
+
+    // Whitelists a hex color before it's used inside an inline style attribute -
+    // these values come from sheet data an Admin controls, but validating here
+    // means a stray value can never break out of the attribute or inject CSS.
+    function safeColor_(c, fallback){
+      return /^#[0-9A-Fa-f]{3,8}$/.test(c || '') ? c : fallback;
+    }
+
+    function loadCompany(){
+      var isAdmin = getUser().role === 'Admin';
+      document.getElementById('page-content').innerHTML =
+        '<div class="card"><div class="empty-state">Loading company details...</div></div>';
+
+      callServer('getCompanyDetails', getToken()).then(function(c){
+        var disabledAttr = isAdmin ? '' : 'disabled';
+        var saveBtn = isAdmin
+          ? '<button class="btn btn-primary" style="margin-top:16px;" onclick="saveCompany()">Save Changes</button>'
+          : '';
+
+        var html = '';
+        html += '<div class="card">';
+        html += '<h2>Company Details</h2>';
+        html += '<label>Company Name</label>';
+        html += '<input type="text" id="c_CompanyName" value="' + escapeHtml(c.CompanyName || '') + '" ' + disabledAttr + '>';
+        html += '<label>Address</label>';
+        html += '<input type="text" id="c_Address" value="' + escapeHtml(c.Address || '') + '" ' + disabledAttr + '>';
+        html += '<label>Certified Standard</label>';
+        html += '<input type="text" id="c_Standard" value="' + escapeHtml(c.Standard || '') + '" ' + disabledAttr + '>';
+        html += '<label>Logo URL (Google Drive share link)</label>';
+        html += '<input type="text" id="c_LogoUrl" value="' + escapeHtml(c.LogoUrl || '') + '" ' + disabledAttr + '>';
+        html += saveBtn;
+        html += '</div>';
+
+        html += '<div class="card">';
+        html += '<h3>Brand Colors</h3>';
+        html += '<div style="display:flex;gap:16px;">';
+        html += '<div><div style="width:60px;height:60px;border-radius:8px;background:' + safeColor_(c.PrimaryColor, '#7A1E2B') + ';"></div><span class="muted">Maroon</span></div>';
+        html += '<div><div style="width:60px;height:60px;border-radius:8px;background:' + safeColor_(c.AccentGreen, '#3A7D44') + ';"></div><span class="muted">Green</span></div>';
+        html += '<div><div style="width:60px;height:60px;border-radius:8px;background:' + safeColor_(c.AccentGold, '#D4A017') + ';"></div><span class="muted">Gold</span></div>';
+        html += '</div>';
+        html += '</div>';
+
+        document.getElementById('page-content').innerHTML = html;
+      }).catch(function(err){
+        document.getElementById('page-content').innerHTML =
+          '<div class="card"><div class="empty-state">Could not load company details.'
+          + '<div style="margin-top:12px;"><button class="btn btn-outline" onclick="loadCompany()">Try Again</button></div></div></div>';
+        console.error('loadCompany failed:', err);
+      });
+    }
+
+    function saveCompany(){
+      var logoUrl = document.getElementById('c_LogoUrl').value.trim();
+      if(logoUrl && !/^https:\/\//i.test(logoUrl)){
+        showToast('Logo URL must be a valid https:// link.', 'error');
+        return;
+      }
+      var updates = {
+        CompanyName: document.getElementById('c_CompanyName').value,
+        Address: document.getElementById('c_Address').value,
+        Standard: document.getElementById('c_Standard').value,
+        LogoUrl: logoUrl
+      };
+      callServer('updateCompanyDetails', getToken(), updates).then(function(){
+        localStorage.removeItem('fcat_company_cache');
+        showToast('Company details saved.', 'success');
+      });
+    }
+  </script>
+</body>
+</html>

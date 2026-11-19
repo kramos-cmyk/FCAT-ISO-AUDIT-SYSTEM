@@ -1,0 +1,531 @@
+<div id="toast" class="toast"></div>
+
+<div class="modal-bg" id="carViewModalBg">
+  <div class="modal" style="max-width:760px;width:94%;max-height:86vh;overflow-y:auto;">
+    <div id="carViewContent">Loading...</div>
+    <div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end;">
+      <button class="btn btn-outline" onclick="closeCarViewModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Official CAR header, shown on the record view modal so it reads as an
+  // official document when viewed or printed from either dashboard. Named
+  // distinctly from CAR_Form.html's own copy since both scripts run on the
+  // same page there and duplicate top-level const declarations would collide.
+  const CAR_HEADER_IMAGE_ = 'https://drive.google.com/thumbnail?id=18WDJ733w71STOwp88zv4bI6YYpYvY-00&sz=w1200';
+
+  // ---- Session helpers (token stored in localStorage; validated server-side on every call) ----
+  function getToken(){ return localStorage.getItem('fcat_token'); }
+  function getUser(){ try{ return JSON.parse(localStorage.getItem('fcat_user')); }catch(e){ return null; } }
+  function setSession(token, user){
+    localStorage.setItem('fcat_token', token);
+    localStorage.setItem('fcat_user', JSON.stringify(user));
+  }
+  function clearSession(){
+    localStorage.removeItem('fcat_token');
+    localStorage.removeItem('fcat_user');
+  }
+  // `params` is an optional plain object of extra query params, e.g. {car: 'CAR-ABCD'}
+  function goTo(page, params){
+    getAppUrl().then(url => {
+      if(!url){
+        // We couldn't confirm the real /exec URL. Navigating anyway would build a
+        // relative URL ("?page=...") that resolves against whatever address is
+        // currently loaded - if that's already the sandboxed googleusercontent.com
+        // frame, this is exactly what sends the tab to a blank page permanently.
+        showToast('Could not navigate - please refresh the page and try again.', 'error');
+        return;
+      }
+      // Assigning window.top.location.href directly from here can be silently
+      // blocked by the iframe sandbox with no error thrown (especially once
+      // we're a tick or more removed from the original click, e.g. after an
+      // async server call) - leaving the user stuck on the current page with
+      // no feedback. A real, clicked <a target="_top"> reliably escapes the
+      // sandbox instead, so we synthesize and click one rather than assigning
+      // the location in script.
+      const a = document.createElement('a');
+      a.href = buildPageUrl(url, page, params);
+      a.target = '_top';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  }
+
+  // The app is rendered inside a sandboxed googleusercontent.com iframe.
+  // Any *relative* URL (e.g. "?page=admin") set on window.top resolves
+  // against that iframe's own address, not the real /exec URL — which
+  // sends the whole browser tab straight into the raw sandbox frame and
+  // shows a blank page. So we resolve the real deployed URL once (server
+  // call to getScriptUrl(), cached in localStorage) and always navigate
+  // using an absolute URL built from it.
+  // Only a real script.google.com /exec (or /dev) URL is safe to navigate to.
+  // Anything else - blank, or a googleusercontent.com sandbox URL that leaked in
+  // somehow - must never be cached or used, or it permanently bricks navigation
+  // for that browser (every future goTo() reuses the same bad cached value).
+  function isValidAppUrl_(url){
+    return !!url && /^https:\/\/script\.google\.com\//.test(url);
+  }
+
+  function getAppUrl(){
+    return new Promise(resolve => {
+      const cached = localStorage.getItem('fcat_app_url');
+      if(isValidAppUrl_(cached)){ resolve(cached); return; }
+      if(cached) localStorage.removeItem('fcat_app_url'); // discard a stale/bad value instead of reusing it forever
+
+      // Guard against the google.script.run bridge never calling back at all
+      // (e.g. the tab got stranded on the sandboxed frame). Without this,
+      // goTo() - and anything waiting on it - can hang indefinitely with the
+      // UI stuck mid-action even though the underlying work already finished.
+      let settled = false;
+      const timer = setTimeout(() => {
+        if(settled) return;
+        settled = true;
+        resolve('');
+      }, 15000);
+
+      google.script.run
+        .withSuccessHandler(url => {
+          if(settled) return;
+          settled = true; clearTimeout(timer);
+          if(isValidAppUrl_(url)){
+            localStorage.setItem('fcat_app_url', url);
+            resolve(url);
+          } else {
+            resolve(''); // never cache something we can't verify
+          }
+        })
+        .withFailureHandler(() => {
+          if(settled) return;
+          settled = true; clearTimeout(timer);
+          resolve('');
+        })
+        .getScriptUrl();
+    });
+  }
+
+  // `params` is an optional plain object of extra query params, e.g. {car: 'CAR-ABCD'}
+  function buildPageUrl(baseUrl, page, params){
+    let url = (baseUrl || '') + '?page=' + page;
+    if(params){
+      Object.keys(params).forEach(k => {
+        if(params[k] !== undefined && params[k] !== null && params[k] !== ''){
+          url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+        }
+      });
+    }
+    return url;
+  }
+
+  // For rendering <a href="..."> links: fills them in with the correct
+  // absolute URL once it's known. Usage: <a data-page="admin">Admin</a>
+  // (add data-car="CAR-ABCD" on the element to carry a record number along, e.g.
+  // for an "Edit" link into the form page), then call wireInternalLinks() after
+  // inserting that HTML.
+  function wireInternalLinks(root){
+    getAppUrl().then(url => {
+      (root || document).querySelectorAll('[data-page]').forEach(a => {
+        const params = {};
+        if(a.dataset.car) params.car = a.dataset.car;
+        a.setAttribute('href', buildPageUrl(url, a.getAttribute('data-page'), params));
+      });
+    });
+  }
+
+  // Redirect to login if no session; call at top of every protected page.
+  function requireLogin(){
+    if(!getToken() || !getUser()){ goTo('login'); return false; }
+    return true;
+  }
+  function requireRole(role){
+    const u = getUser();
+    if(!u || u.role !== role){ goTo(u ? (u.role === 'Admin' ? 'admin' : 'employee') : 'login'); return false; }
+    return true;
+  }
+
+  function showToast(msg, type){
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + (type || '');
+    t.style.display = 'block';
+    clearTimeout(window.__toastTimer);
+    window.__toastTimer = setTimeout(()=>{ t.style.display='none'; }, 4200);
+  }
+
+  // Wraps google.script.run with promise + auto-handling of expired sessions.
+  // Also guards against a call that never calls back at all (e.g. the app got
+  // stranded on the raw sandboxed frame and the google.script.run bridge to it
+  // is gone) - without this, callers relying on .then() just sit on "Loading..."
+  // forever with no error and no way for the user to know what happened.
+  function callServer(fnName, ...args){
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if(settled) return;
+        settled = true;
+        showToast('The server is not responding. Please refresh the page.', 'error');
+        reject(new Error('TIMEOUT: ' + fnName));
+      }, 20000);
+
+      google.script.run
+        .withSuccessHandler(res => {
+          if(settled) return;
+          settled = true; clearTimeout(timer);
+          resolve(res);
+        })
+        .withFailureHandler(err => {
+          if(settled) return;
+          settled = true; clearTimeout(timer);
+          const msg = (err && err.message) ? err.message : String(err);
+          if(msg.indexOf('SESSION_EXPIRED') > -1){
+            showToast('Your session has expired. Please log in again.', 'error');
+            clearSession();
+            setTimeout(()=>goTo('login'), 1200);
+          } else if(msg.indexOf('NOT_AUTHORIZED') > -1){
+            showToast('You are not authorized to do that.', 'error');
+          } else {
+            showToast('Error: ' + msg, 'error');
+          }
+          reject(err);
+        })[fnName](...args);
+    });
+  }
+
+  // ---- Read-only "View submission" modal, shared by both dashboards ----
+  function openCarViewModal(carNo){
+    document.getElementById('carViewModalBg').style.display = 'flex';
+    document.getElementById('carViewContent').innerHTML = '<div class="empty-state">Loading record...</div>';
+    callServer('getCAR', getToken(), carNo).then(rec => {
+      document.getElementById('carViewContent').innerHTML = renderCarViewHtml_(rec);
+      if(rec) loadCarComments_(carNo);
+    }).catch(() => {
+      document.getElementById('carViewContent').innerHTML = '<div class="empty-state">Could not load this record.</div>';
+    });
+  }
+
+  function closeCarViewModal(){
+    document.getElementById('carViewModalBg').style.display = 'none';
+  }
+
+  function vField_(label, value){
+    return '<div style="margin-bottom:10px;">'
+      + '<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">'+escapeHtml(label)+'</div>'
+      + '<div>'+ (value && String(value).trim() !== '' ? escapeHtml(String(value)).replace(/\n/g,'<br>') : '<span class="muted">\u2014</span>') +'</div>'
+      + '</div>';
+  }
+
+  // Formats the RootCauseFactors JSON ({"Man":["",...], "Method":[...], ...})
+  // into a readable list instead of dumping the raw JSON string.
+  function vRootCauseFactors_(raw){
+    if(!raw || String(raw).trim() === '') return '<span class="muted">\u2014</span>';
+    let data;
+    try {
+      data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch(e){
+      // Not valid JSON (e.g. legacy free-text data) - just show it as-is.
+      return escapeHtml(String(raw)).replace(/\n/g,'<br>');
+    }
+    if(!data || typeof data !== 'object') return '<span class="muted">\u2014</span>';
+
+    const rows = Object.keys(data).map(factor => {
+      const whys = Array.isArray(data[factor]) ? data[factor] : [];
+      const filled = whys.map(w => String(w||'').trim()).filter(w => w !== '');
+      if(filled.length === 0) return '';
+      return '<div style="margin-bottom:6px;"><strong>'+escapeHtml(factor)+':</strong> '
+        + filled.map(escapeHtml).join(' &rarr; ')
+        + '</div>';
+    }).filter(Boolean);
+
+    return rows.length > 0 ? rows.join('') : '<span class="muted">\u2014</span>';
+  }
+
+  function vBadge_(status){
+    const cls = status === 'Closed' ? 'closed' : (status === 'Needs Attention' ? 'attention' : 'open');
+    return '<span class="badge '+cls+'" style="font-size:12px;vertical-align:middle;">'+escapeHtml(status)+'</span>';
+  }
+
+  // Parses a JSON entries array, falling back to a legacy single-value
+  // object (pre-migration records) if the array is empty/missing.
+  function vEntries_(raw, legacy){
+    let entries = [];
+    if(raw){
+      try { entries = JSON.parse(raw) || []; } catch(e){ entries = []; }
+    }
+    if(entries.length === 0 && legacy && Object.keys(legacy).some(k => legacy[k])){
+      entries = [legacy];
+    }
+    return entries;
+  }
+
+  function vEntryTable_(entries, columns){
+    if(!entries || entries.length === 0) return '<div class="empty-state" style="padding:14px 0;">None recorded.</div>';
+    let html = '<div class="table-scroll"><table><thead><tr>'
+      + columns.map(c => '<th>'+escapeHtml(c[1])+'</th>').join('') + '</tr></thead><tbody>';
+    entries.forEach(e => {
+      html += '<tr>' + columns.map(c => '<td>'+(escapeHtml(e[c[0]]||'') || '<span class="muted">\u2014</span>')+'</td>').join('') + '</tr>';
+    });
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function vEntryList_(entries){
+    if(!entries || entries.length === 0) return '<div class="empty-state" style="padding:14px 0;">None recorded.</div>';
+    return '<ul style="margin:0;padding-left:20px;">' + entries.map(e => '<li style="margin-bottom:6px;">'+escapeHtml(e)+'</li>').join('') + '</ul>';
+  }
+
+  function vEvidenceLinks_(rec){
+    let links = [];
+    if(rec.EvidenceLinks){
+      try { links = JSON.parse(rec.EvidenceLinks) || []; } catch(e){ links = []; }
+    }
+    if(links.length === 0 && rec.EvidenceLink) links = [rec.EvidenceLink];
+    links = links.filter(u => safeUrl_(u));
+    if(links.length === 0) return '<span class="muted">No evidence attached.</span>';
+    return links.map((u, i) => '<a href="'+safeUrl_(u)+'" target="_blank" style="margin-right:14px;">Evidence file '+(i+1)+'</a>').join('');
+  }
+
+  function vFollowUpHistory_(rec){
+    let entries = [];
+    if(rec.FollowUpEntries){
+      try { entries = JSON.parse(rec.FollowUpEntries) || []; } catch(e){ entries = []; }
+    }
+    if(entries.length === 0 && rec.FollowUpDate){
+      entries = [{ FollowUpDate: rec.FollowUpDate, ResultOfVerification: rec.ResultOfVerification, VerifiedBy: rec.VerifiedBy, ConformedBy: rec.ConformedBy }];
+    }
+    if(entries.length === 0) return null;
+    return entries.slice().reverse().map(f =>
+      '<div style="padding:10px 0;border-bottom:1px solid #f0e6e6;">'
+      + (f.CreatedAt ? '<div class="muted" style="font-size:12px;">'+fmtDateTime(f.CreatedAt)+(f.AddedBy ? ' &bull; '+escapeHtml(f.AddedBy) : '')+'</div>' : '')
+      + '<div><strong>Follow-up Date:</strong> '+escapeHtml(f.FollowUpDate||'')+'</div>'
+      + '<div><strong>Result of Verification:</strong> '+escapeHtml(f.ResultOfVerification||'')+'</div>'
+      + '<div><strong>Verified By:</strong> '+escapeHtml(f.VerifiedBy||'')+(f.ConformedBy ? ' &bull; <strong>Conformed By:</strong> '+escapeHtml(f.ConformedBy) : '')+'</div>'
+      + '</div>'
+    ).join('');
+  }
+
+  function vRootCauseList_(rec){
+    let entries = [];
+    if(rec.PossibleRootCauseEntries){
+      try { entries = JSON.parse(rec.PossibleRootCauseEntries) || []; } catch(e){ entries = []; }
+    }
+    if(entries.length === 0 && rec.PossibleRootCause) entries = [rec.PossibleRootCause];
+    return vEntryList_(entries);
+  }
+
+  function renderCarViewHtml_(rec){
+    if(!rec) return '<div class="empty-state">Record not found.</div>';
+    const status = rec.AdminFlag === 'Needs Attention' ? 'Needs Attention' : rec.Status;
+    let html = '<img src="'+CAR_HEADER_IMAGE_+'" alt="Official CAR Header" style="max-width:100%;display:block;margin:0 auto 16px;border-radius:8px;">'
+      + '<h2 style="margin-top:0;">'+escapeHtml(rec.CARNo)+' '+vBadge_(status)+'</h2>'
+      + '<p class="muted" style="margin-top:-6px;">Handled by '+(rec.EmployeeName && rec.EmployeeName !== '(Unassigned)' ? escapeHtml(rec.EmployeeName) : 'Unclaimed')+' &bull; Raised '+fmtDateTime(rec.CreatedAt)+'</p>';
+
+    if(rec.AdminFlag === 'Needs Attention' && rec.AdminNote){
+      html += '<div class="locked-note">Flagged by an Auditor: '+escapeHtml(rec.AdminNote)+'</div>';
+    }
+
+    if(rec.AdminDeadline){
+      const isOverdue = rec.Status !== 'Closed' && new Date(rec.AdminDeadline) < new Date(new Date().toDateString());
+      html += '<div class="locked-note"'+(isOverdue ? ' style="background:#FDEEDC;color:#B3261E;"' : '')+'>'
+        + (isOverdue ? 'Overdue - deadline was ' : 'Deadline set by an Auditor: ') + escapeHtml(fmtDate(rec.AdminDeadline))
+        + '</div>';
+    }
+
+    html += '<div class="section-title">1. Finding Details</div><div class="section-body grid-2">'
+      + vField_('Raised By (Auditor)', rec.RaisedBy) + vField_('Received By', rec.EmployeeName && rec.EmployeeName !== '(Unassigned)' ? rec.EmployeeName : 'Unclaimed')
+      + vField_('Type of Finding', rec.Type) + vField_('Source', rec.Source)
+      + vField_('Department / Process', rec.Department) + vField_('Date Issued', rec.DateIssued)
+      + vField_('ISO 9001 Clause', rec.ISOClause) + vField_('Related Company Document', rec.CompanyDocument)
+      + '</div><div class="section-body">' + vField_('Details of Incident or Nonconformity', rec.Details) + '</div>';
+
+    html += '<div class="section-title">2. Correction (Immediate Action Taken)</div><div class="section-body">'
+      + vEntryTable_(vEntries_(rec.CorrectionEntries, {Correction:rec.Correction, DateCompleted:rec.DateCompleted, PersonInCharge:rec.PersonInCharge, Result:rec.Result}),
+          [['Correction','Correction'],['DateCompleted','Date Completed'],['PersonInCharge','Person In-Charge'],['Result','Result']])
+      + '</div>';
+
+    html += '<div class="section-title">3. Root Cause Analysis</div><div class="section-body grid-2">'
+      + '<div style="margin-bottom:10px;"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Contributing Factors</div><div>'
+      + vRootCauseFactors_(rec.RootCauseFactors) + '</div></div>'
+      + '<div style="margin-bottom:10px;"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Possible Root Cause(s)</div>'
+      + vRootCauseList_(rec)
+      + '</div>'
+      + vField_('Validation Method', rec.ValidationMethod) + vField_('Validation Date', rec.ValidationDate)
+      + vField_('Results of Validation', rec.ValidationResult)
+      + '</div>';
+
+    html += '<div class="section-title">4. Corrective Action Plan</div><div class="section-body">'
+      + vField_('True Root Cause', rec.TrueRootCause)
+      + vEntryTable_(vEntries_(rec.CorrectiveActionEntries, {CorrectiveAction:rec.CorrectiveAction, ActionOwnerTargetDate:rec.ActionOwnerTargetDate, DateImplemented:rec.DateImplemented}),
+          [['CorrectiveAction','Corrective Action'],['ActionOwnerTargetDate','Person In-Charge / Target Date'],['DateImplemented','Date Implemented']])
+      + '</div>';
+
+    html += '<div class="section-title">5. General Evidence / Record</div><div class="section-body">'
+      + vEvidenceLinks_(rec)
+      + '</div>';
+
+    html += '<div class="section-title">6. Sign-off</div><div class="section-body grid-2">'
+      + vField_('Prepared By', rec.PreparedBy) + vField_('Date Prepared', rec.PreparedDate)
+      + vField_('Approved By', rec.ApprovedBy) + vField_('Date Approved', rec.ApprovedDate)
+      + vField_('Conformed By', rec.SignOffConformedBy) + vField_('Date Conformed', rec.SignOffConformedDate)
+      + '</div>';
+
+    const followUpHtml = vFollowUpHistory_(rec);
+    if(followUpHtml){
+      html += '<div class="section-title">Auditor Follow-up / Verification History</div><div class="section-body">'
+        + followUpHtml
+        + '</div>';
+    }
+
+    html += '<div class="section-title">Comments</div><div class="section-body" id="carCommentsBox">'
+      + '<div class="empty-state">Loading comments...</div></div>';
+
+    html += '<div style="margin-top:18px;">'
+      + '<button class="btn btn-primary" onclick="exportCarRecord(\''+rec.CARNo+'\', this)">Export as PDF (FO-RI-05)</button>'
+      + '</div>';
+
+    return html;
+  }
+
+  // ---- Comments (Admin can post; both roles can view on records they can see) ----
+  function loadCarComments_(carNo){
+    const box = document.getElementById('carCommentsBox');
+    if(!box) return;
+    callServer('getComments', getToken(), carNo).then(comments => {
+      renderCarComments_(carNo, comments);
+    }).catch(() => {
+      box.innerHTML = '<div class="empty-state">Could not load comments.</div>';
+    });
+  }
+
+  function renderCarComments_(carNo, comments){
+    const box = document.getElementById('carCommentsBox');
+    if(!box) return;
+    const isAdmin = getUser() && getUser().role === 'Admin';
+
+    let html = '';
+    if(!comments || comments.length === 0){
+      html += '<div class="empty-state" style="padding:14px 0;">No comments yet.</div>';
+    } else {
+      html += comments.map(c =>
+        '<div style="padding:10px 0;border-bottom:1px solid #f0e6e6;">'
+        + '<div style="display:flex;justify-content:space-between;gap:10px;">'
+        + '<strong style="font-size:13.5px;">'+escapeHtml(c.UserName)+(c.Role === 'Admin' ? ' <span class="badge neutral" style="font-size:10.5px;padding:1px 8px;">Auditor</span>' : '')+'</strong>'
+        + '<span class="muted" style="font-size:12px;white-space:nowrap;">'+fmtDateTime(c.CreatedAt)+'</span>'
+        + '</div>'
+        + '<div style="margin-top:4px;">'+escapeHtml(c.Message).replace(/\n/g,'<br>')+'</div>'
+        + '</div>'
+      ).join('');
+    }
+
+    if(isAdmin){
+      html += '<div style="margin-top:14px;">'
+        + '<textarea id="newCommentBox" rows="2" placeholder="Add a comment for the employee..."></textarea>'
+        + '<button class="btn btn-primary" style="margin-top:8px;padding:8px 16px;font-size:13px;" onclick="submitCarComment_(\''+carNo+'\', this)">Post Comment</button>'
+        + '</div>';
+    }
+
+    box.innerHTML = html;
+  }
+
+  function submitCarComment_(carNo, btnEl){
+    const box = document.getElementById('newCommentBox');
+    const msg = box ? box.value.trim() : '';
+    if(!msg){ showToast('Please enter a comment.', 'error'); return; }
+    const original = btnEl.innerHTML;
+    btnEl.disabled = true;
+    btnEl.innerHTML = '<span class="spinner"></span> Posting...';
+    callServer('addComment', getToken(), carNo, msg).then(res => {
+      if(!res || !res.ok){ showToast((res && res.error) || 'Could not post comment.', 'error'); return; }
+      showToast('Comment posted.', 'success');
+      loadCarComments_(carNo);
+    }).catch(()=>{}).finally(() => {
+      btnEl.disabled = false;
+      btnEl.innerHTML = original;
+    });
+  }
+
+  // Shared "Export as PDF" action for a CAR/NC/OFI record - used by both dashboards.
+  // Pass the button element so we can show a spinner and restore it afterwards.
+  function exportCarRecord(carNo, btnEl){
+    const original = btnEl ? btnEl.innerHTML : null;
+    if(btnEl){ btnEl.disabled = true; btnEl.innerHTML = '<span class="spinner"></span> Exporting...'; }
+    callServer('exportCarDocument', getToken(), carNo).then(res => {
+      if(res.ok){
+        window.open(res.url, '_blank');
+        showToast('Exported ' + res.name, 'success');
+      } else {
+        showToast(res.error || 'Could not export this record.', 'error');
+      }
+    }).finally(()=>{
+      if(btnEl){ btnEl.disabled = false; btnEl.innerHTML = original; }
+    });
+  }
+
+  function doLogout(){
+    callServer('logout', getToken()).finally(()=>{
+      clearSession();
+      goTo('login');
+    });
+  }
+
+  function fmtDate(iso){
+    if(!iso) return '';
+    const d = new Date(iso);
+    if(isNaN(d)) return iso;
+    return d.toLocaleDateString('en-PH', {year:'numeric', month:'short', day:'numeric'});
+  }
+
+  // For timestamps where the time-of-day actually matters (comments, posts,
+  // edit history) - "YYYY-MM-DD HH:MM" in the viewer's local time, deliberately
+  // dropping seconds and the raw T/Z from the underlying ISO string.
+  function fmtDateTime(iso){
+    if(!iso) return '';
+    const d = new Date(iso);
+    if(isNaN(d)) return String(iso).replace('T', ' ').replace(/\.\d+Z?$/, '');
+    const pad = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+      + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  // Normalizes a Drive URL into one that can actually be used as an <img src>.
+  // Drive's normal "view" link (from file.getUrl(), or a raw ?id= link) is an
+  // HTML viewer page, not image bytes - browsers show a broken-image icon for
+  // it. This extracts the file ID either way and builds the thumbnail endpoint,
+  // which serves the real image. Self-heals any links saved before this fix.
+  // Multi-evidence records store an EvidenceLinks JSON array; older records
+  // may only have the legacy single EvidenceLink field. This is the one
+  // place that difference gets resolved, for consistent display everywhere.
+  function evidenceLinksOf_(rec){
+    let links = [];
+    if(rec.EvidenceLinks){
+      try { links = JSON.parse(rec.EvidenceLinks) || []; } catch(e){ links = []; }
+    }
+    if(links.length === 0 && rec.EvidenceLink) links = [rec.EvidenceLink];
+    return links.filter(u => safeUrl_(u));
+  }
+
+  function driveImageSrc_(url){
+    const safe = safeUrl_(url);
+    if(!safe) return '';
+    const m = safe.match(/\/file\/d\/([^/]+)/) || safe.match(/[?&]id=([^&]+)/);
+    return m && m[1] ? 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w1000' : safe;
+  }
+
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // Evidence links are meant to always be Google Drive URLs we generated
+  // ourselves via uploadEvidence(), but they still pass through as plain
+  // strings in the CAR payload - so before ever putting one in an href we
+  // both escape it (stops it from breaking out of the attribute) and make
+  // sure it's actually an http(s) URL (stops a "javascript:" URI, which
+  // escaping alone would not catch). Anything else renders as no link.
+  function safeUrl_(url){
+    const s = String(url || '').trim();
+    if(!/^https:\/\//i.test(s)) return '';
+    return escapeHtml(s);
+  }
+</script>

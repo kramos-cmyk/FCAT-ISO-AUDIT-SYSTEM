@@ -1,0 +1,91 @@
+<div class="topbar">
+  <div class="brand">
+    <img id="nb-logo" src="https://drive.google.com/thumbnail?id=1AjBH5OjVr9uuo3Wlb7VywM7eAkXD7zlR&sz=w1200"
+         alt="FCAT logo" style="height:30px;width:30px;border-radius:6px;object-fit:cover;background:#fff;">
+    <span id="nb-company">FCAT ISO Audit</span>
+  </div>
+  <div class="user-menu">
+    <span id="nb-user"></span>
+    <button onclick="doLogout()">Log out</button>
+  </div>
+</div>
+<div class="app-shell">
+  <div class="sidebar" id="nb-sidebar"></div>
+  <div class="content" id="page-content"></div>
+</div>
+<div class="app-footer">
+  <span>&copy; <span id="footer-year"></span> <span id="footer-company">FCAT ISO Audit</span></span>
+  <span class="footer-sep">&bull;</span>
+  <span id="footer-standard">ISO 9001:2015</span>
+  <span class="footer-sep">&bull;</span>
+  <span>Corrective Actions &amp; Compliance Portal</span>
+</div>
+
+<script>
+  document.getElementById('footer-year').textContent = new Date().getFullYear();
+
+  // Company name/logo barely change, but renderNav() runs on every page load.
+  // Paint instantly from a short-lived cache instead of making every navigation
+  // wait on a server round trip, then quietly refresh in the background.
+  const COMPANY_CACHE_MS = 5 * 60 * 1000; // 5 minutes
+  function applyCompanyDetails_(c){
+    if(c && c.CompanyName){
+      document.getElementById('nb-company').textContent = c.CompanyName;
+      document.getElementById('footer-company').textContent = c.CompanyName;
+    }
+    if(c && c.LogoUrl) document.getElementById('nb-logo').src = c.LogoUrl;
+    if(c && c.Standard) document.getElementById('footer-standard').textContent = c.Standard;
+  }
+
+  // Internal role values stay 'Admin'/'Employee' (used throughout the app's
+  // authorization logic) - this only controls what's shown to the user.
+  function roleLabel_(role){
+    return role === 'Admin' ? 'Auditor Account' : 'Process Owner';
+  }
+
+  function renderNav(activePage){
+    const u = getUser();
+    if(!u) return;
+    document.getElementById('nb-user').textContent = u.name + ' \u2022 ' + roleLabel_(u.role);
+
+    let links = '';
+    if(u.role === 'Admin'){
+      links = [
+        ['admin','Auditor Dashboard'],
+        ['overview','Overview'],
+        ['users','User Management'],
+        ['announcements','Announcements'],
+        ['form','New CAR / NC / OFI'],
+        ['company','Company Details'],
+        ['profile','My Profile'],
+        ['settings','Settings'],
+        ['terms','Terms of Use']
+      ];
+    } else {
+      links = [
+        ['employee','My Department'],
+        ['announcements','Announcements'],
+        ['profile','My Profile'],
+        ['settings','Settings'],
+        ['terms','Terms of Use']
+      ];
+    }
+    const sidebar = document.getElementById('nb-sidebar');
+    sidebar.innerHTML = links.map(l =>
+      '<a data-page="'+l[0]+'" href="#" class="'+(l[0]===activePage?'active':'')+'">'+l[1]+'</a>'
+    ).join('');
+    wireInternalLinks(sidebar);
+
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem('fcat_company_cache') || 'null'); } catch(e){ cached = null; }
+    const isFresh = cached && cached.at && (Date.now() - cached.at) < COMPANY_CACHE_MS;
+
+    if(cached && cached.data) applyCompanyDetails_(cached.data);
+    if(isFresh) return; // cache is fresh enough - skip the network round trip entirely
+
+    callServer('getCompanyDetails', getToken()).then(c=>{
+      applyCompanyDetails_(c);
+      try { localStorage.setItem('fcat_company_cache', JSON.stringify({ at: Date.now(), data: c })); } catch(e){ /* storage full, ignore */ }
+    }).catch(()=>{});
+  }
+</script>

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <?!= include('NavBar'); ?>
+  <?!= include('ClientHelpers'); ?>
+
+  <div class="modal-bg" id="userModalBg">
+    <div class="modal">
+      <h3 id="userModalTitle">Add Process Owner / Auditor Account</h3>
+      <label>Full Name <span class="req">*</span></label>
+      <input type="text" id="nuName">
+      <label>Email <span class="req">*</span></label>
+      <input type="email" id="nuEmail">
+      <div id="nuPasswordWrap">
+        <label>Temporary Password <span class="req">*</span></label>
+        <input type="text" id="nuPassword" placeholder="min 8 characters">
+      </div>
+      <div class="grid-2">
+        <div>
+          <label>Department(s) <span class="req">*</span></label>
+          <div id="nuDeptList" style="max-height:180px;overflow-y:auto;border:1.5px solid var(--line);border-radius:8px;padding:10px;"></div>
+          <div class="field-error" id="err_nuDept"></div>
+          <p class="muted" style="margin-top:4px;">Select every department this person handles findings for.</p>
+        </div>
+        <div><label>Position</label><input type="text" id="nuPosition"></div>
+      </div>
+      <label>Role</label>
+      <select id="nuRole"><option value="Employee">Process Owner</option><option value="Admin">Auditor Account</option></select>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="btn btn-outline" onclick="closeUserModal()">Cancel</button>
+        <button class="btn btn-primary" id="nuSubmitBtn" onclick="submitUserForm()">Create Account</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    if(requireLogin() && requireRole('Admin')){
+      renderNav('users');
+      buildPage();
+    }
+    let allUsers = [];
+    let departmentList = [];
+    let editingUserId = null;
+
+    function buildPage(){
+      document.getElementById('page-content').innerHTML = `
+        <div class="card">
+          <h2 style="margin-top:0;">User Overview</h2>
+          <div class="kpi-grid" id="userKpiGrid"></div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <h2 style="margin:0;">User Management</h2>
+            <div style="display:flex;gap:10px;">
+              <select id="filterRole" onchange="renderUsers()">
+                <option value="">All roles</option>
+                <option value="Admin">Auditor Account</option>
+                <option value="Employee">Process Owner</option>
+              </select>
+              <input type="text" id="filterUserSearch" placeholder="Search name / email / department" oninput="renderUsers()" style="min-width:240px;">
+              <button class="btn btn-gold" onclick="openUserModal()">+ Add User</button>
+            </div>
+          </div>
+          <div id="usersTable" class="table-scroll" style="margin-top:14px;">Loading...</div>
+        </div>
+      `;
+      loadUsers();
+    }
+
+    function loadUsers(){
+      const usersPromise = callServer('listUsers', getToken());
+      const deptPromise = callServer('getDepartmentList', getToken()).catch(() => []);
+      Promise.all([usersPromise, deptPromise]).then(([rows, depts]) => {
+        allUsers = rows;
+        departmentList = depts || [];
+        renderKpis();
+        renderUsers();
+      }).catch(err => {
+        document.getElementById('usersTable').innerHTML =
+          '<div class="empty-state">Could not load users. Please refresh the page.</div>';
+        console.error('loadUsers failed:', err);
+      });
+    }
+
+    function renderKpis(){
+      const total = allUsers.length;
+      const admins = allUsers.filter(u => u.role === 'Admin').length;
+      const employees = allUsers.filter(u => u.role === 'Employee').length;
+      const locked = allUsers.filter(u => u.status === 'Locked').length;
+      const cards = [
+        ['Total Users', total, ''],
+        ['Auditor Accounts', admins, 'neutral'],
+        ['Process Owners', employees, ''],
+        ['Locked Accounts', locked, locked > 0 ? 'attention' : '']
+      ];
+      document.getElementById('userKpiGrid').innerHTML = cards.map(([label, val, cls]) =>
+        '<div class="kpi-card'+(cls ? ' kpi-'+cls : '')+'"><div class="kpi-value">'+val+'</div><div class="kpi-label">'+escapeHtml(label)+'</div></div>'
+      ).join('');
+    }
+
+    function renderUsers(){
+      const roleF = document.getElementById('filterRole').value;
+      const q = document.getElementById('filterUserSearch').value.toLowerCase();
+      let rows = allUsers.slice();
+      if(roleF) rows = rows.filter(u => u.role === roleF);
+      if(q) rows = rows.filter(u =>
+        String(u.name||'').toLowerCase().includes(q) ||
+        String(u.email||'').toLowerCase().includes(q) ||
+        String(u.department||'').toLowerCase().includes(q)
+      );
+
+      if(rows.length === 0){
+        document.getElementById('usersTable').innerHTML = '<div class="empty-state">No matching users.</div>';
+        return;
+      }
+
+      let html = '<table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Department</th><th>Position</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+      const myUserId = getUser().userId;
+      rows.forEach(u => {
+        const isSelf = u.userId === myUserId;
+        html += '<tr>'
+          + '<td>'+escapeHtml(u.name)+'</td>'
+          + '<td>'+escapeHtml(u.email)+'</td>'
+          + '<td>'+(u.role === 'Admin' ? '<span class="badge neutral">Auditor Account</span>' : 'Process Owner')+'</td>'
+          + '<td>'+escapeHtml(u.department)+'</td>'
+          + '<td>'+(escapeHtml(u.position||'') || '<span class="muted">\u2014</span>')+'</td>'
+          + '<td>'+(u.status === 'Locked' ? '<span class="badge open">Locked</span>' : '<span class="badge closed">Active</span>')+'</td>'
+          + '<td style="white-space:nowrap;">'
+            + '<button class="btn btn-outline" style="padding:6px 10px;font-size:12.5px;" onclick="openUserModal(\''+u.userId+'\')">Edit</button> '
+            + (isSelf
+                ? '<button class="btn btn-outline" style="padding:6px 10px;font-size:12.5px;" disabled title="You cannot lock your own account">Lock</button>'
+                : '<button class="btn '+(u.status==='Locked'?'btn-green':'btn-outline')+'" style="padding:6px 10px;font-size:12.5px;" '
+                  + 'onclick="toggleLock(\''+u.userId+'\','+ (u.status!=='Locked') +')">'+(u.status==='Locked'?'Unlock':'Lock')+'</button>')
+          + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      document.getElementById('usersTable').innerHTML = html;
+    }
+
+    function toggleLock(userId, lock){
+      callServer('setUserLock', getToken(), userId, lock).then(res => {
+        if(!res || !res.ok){ showToast((res && res.error) || 'Could not update this account.', 'error'); return; }
+        const u = allUsers.find(x => x.userId === userId);
+        if(u) u.status = lock ? 'Locked' : 'Active';
+        showToast(lock ? 'Account locked.' : 'Account unlocked.', 'success');
+        renderKpis();
+        renderUsers();
+      }).catch(()=>{});
+    }
+
+    function openUserModal(userId){
+      editingUserId = userId || null;
+      const u = editingUserId ? allUsers.find(x => x.userId === editingUserId) : null;
+      const currentDepts = u ? u.department.split(',').map(d => d.trim()).filter(Boolean) : [];
+
+      document.getElementById('userModalTitle').textContent = u ? 'Edit User' : 'Add Process Owner / Auditor Account';
+      document.getElementById('nuPasswordWrap').style.display = u ? 'none' : 'block';
+      document.getElementById('nuSubmitBtn').textContent = u ? 'Save Changes' : 'Create Account';
+
+      document.getElementById('nuName').value = u ? u.name : '';
+      document.getElementById('nuEmail').value = u ? u.email : '';
+      document.getElementById('nuPassword').value = '';
+      document.getElementById('nuPosition').value = u ? (u.position || '') : '';
+      document.getElementById('nuRole').value = u ? u.role : 'Employee';
+      const isSelf = editingUserId && editingUserId === getUser().userId;
+      document.getElementById('nuRole').disabled = !!isSelf;
+      document.getElementById('err_nuDept').style.display = 'none';
+
+      const listBox = document.getElementById('nuDeptList');
+      // Union with the user's current departments, not just the canonical
+      // list - if one of their departments was since renamed or removed from
+      // the Departments sheet, it still needs a checkbox (checked) here or
+      // saving would silently drop it with no warning.
+      const optionDepts = Array.from(new Set(departmentList.concat(currentDepts))).sort();
+      listBox.innerHTML = optionDepts.length
+        ? optionDepts.map(d =>
+            '<label style="display:flex;align-items:center;gap:8px;font-weight:400;margin:0 0 8px;color:var(--text);">'
+            + '<input type="checkbox" class="nuDeptCheck" value="'+escapeHtml(d)+'" '+(currentDepts.indexOf(d) > -1 ? 'checked' : '')+' style="width:auto;"> '+escapeHtml(d)
+            + (departmentList.indexOf(d) === -1 ? ' <span class="muted">(not in department list)</span>' : '')
+            + '</label>'
+          ).join('')
+        : '<div class="muted">No departments found. Add one to the Departments sheet first.</div>';
+
+      document.getElementById('userModalBg').style.display = 'flex';
+    }
+    function closeUserModal(){ document.getElementById('userModalBg').style.display = 'none'; editingUserId = null; }
+
+    function submitUserForm(){
+      const departments = Array.from(document.querySelectorAll('.nuDeptCheck:checked')).map(el => el.value);
+      const errEl = document.getElementById('err_nuDept');
+
+      const data = {
+        name: document.getElementById('nuName').value.trim(),
+        email: document.getElementById('nuEmail').value.trim(),
+        password: document.getElementById('nuPassword').value,
+        departments: departments,
+        position: document.getElementById('nuPosition').value.trim(),
+        role: document.getElementById('nuRole').value
+      };
+      if(departments.length === 0){
+        errEl.textContent = 'Select at least one department.';
+        errEl.style.display = 'block';
+        return;
+      }
+      errEl.style.display = 'none';
+      if(!data.name || !data.email){
+        showToast('Please fill in all required fields.', 'error'); return;
+      }
+      if(!editingUserId){
+        if(!data.password){ showToast('Please fill in all required fields.', 'error'); return; }
+        if(data.password.length < 8){ showToast('Password must be at least 8 characters.', 'error'); return; }
+      }
+
+      const btn = document.getElementById('nuSubmitBtn');
+      const original = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> ' + (editingUserId ? 'Saving...' : 'Creating...');
+
+      const call = editingUserId
+        ? callServer('updateUser', getToken(), editingUserId, data)
+        : callServer('createUser', getToken(), data);
+
+      call.then(res => {
+        if(res.ok){
+          if(editingUserId){
+            const idx = allUsers.findIndex(x => x.userId === editingUserId);
+            if(idx > -1 && res.user) allUsers[idx] = res.user;
+            showToast('User updated.', 'success');
+          } else {
+            if(res.user) allUsers.push(res.user);
+            showToast('Account created.', 'success');
+          }
+          closeUserModal();
+          renderKpis();
+          renderUsers();
+        } else { showToast(res.error, 'error'); }
+      }).catch(()=>{}).finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      });
+    }
+  </script>
+</body>
+</html>

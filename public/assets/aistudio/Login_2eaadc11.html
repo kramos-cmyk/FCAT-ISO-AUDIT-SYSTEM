@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-card">
+      <img src="https://drive.google.com/thumbnail?id=1AjBH5OjVr9uuo3Wlb7VywM7eAkXD7zlR&sz=w1200"
+           alt="FCAT logo" style="display:block;height:56px;width:56px;object-fit:cover;border-radius:12px;margin:0 auto 12px;">
+      <h1>FCAT ISO Audit</h1>
+      <p class="sub">Corrective Actions &amp; Compliance Portal</p>
+
+      <div id="loginError" class="field-error" style="display:none;background:#FDEEDC;padding:9px 11px;border-radius:7px;"></div>
+
+      <label>Email <span class="req">*</span></label>
+      <input type="email" id="email" autocomplete="username" placeholder="you@fcat.com.ph">
+
+      <label>Password <span class="req">*</span></label>
+      <input type="password" id="password" autocomplete="current-password" placeholder="Enter your password">
+
+      <button class="btn btn-primary" id="loginBtn" style="width:100%;margin-top:20px;" onclick="doLogin()">Log In</button>
+      <p class="muted" style="text-align:center;margin-top:16px;">
+        Forgot your password? Contact your administrator.
+      </p>
+    </div>
+    <div class="app-footer" style="background:transparent;border-top:none;color:rgba(255,255,255,.75);margin-top:22px;">
+      &copy; <span id="footer-year"></span> FCAT ISO Audit Management System. All rights reserved.
+    </div>
+  </div>
+
+  <?!= include('ClientHelpers'); ?>
+  <script>
+    document.getElementById('footer-year').textContent = new Date().getFullYear();
+
+    // If already logged in, skip straight to the right dashboard.
+    (function(){
+      const u = getUser();
+      if(u && getToken()){ goTo(u.role === 'Admin' ? 'admin' : 'employee'); }
+    })();
+
+    document.getElementById('password').addEventListener('keydown', e => { if(e.key === 'Enter') doLogin(); });
+
+    function doLogin(){
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const errBox = document.getElementById('loginError');
+      errBox.style.display = 'none';
+
+      if(!email || !password){
+        errBox.textContent = 'Please enter both email and password.';
+        errBox.style.display = 'block';
+        return;
+      }
+      const btn = document.getElementById('loginBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Signing in...';
+
+      callServer('login', email, password).then(res => {
+        if(res.ok){
+          setSession(res.token, res.user);
+          goTo(res.user.role === 'Admin' ? 'admin' : 'employee');
+        } else {
+          errBox.textContent = res.error || 'Login failed.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.innerHTML = 'Log In';
+        }
+      }).catch(()=>{
+        btn.disabled = false;
+        btn.innerHTML = 'Log In';
+      });
+    }
+  </script>
+</body>
+</html>

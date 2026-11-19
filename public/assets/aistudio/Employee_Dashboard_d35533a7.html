@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <?!= include('NavBar'); ?>
+  <?!= include('ClientHelpers'); ?>
+
+  <script>
+    if(requireLogin()){
+      renderNav('employee');
+      buildPage();
+    }
+
+    function buildPage(){
+      document.getElementById('page-content').innerHTML = `
+        <div id="lockNotice"></div>
+        <div class="card">
+          <h2 style="margin:0;">My Department's Compliance Records</h2>
+          <p class="muted">Findings raised by an Auditor for your department(s). Anyone in the same department can pick up an unclaimed record and work on it.</p>
+          <div id="statsRow" style="display:flex;gap:14px;margin:14px 0 6px;flex-wrap:wrap;"></div>
+          <div id="recordsTable" class="table-scroll"></div>
+        </div>
+
+        <div class="card">
+          <h3>Notifications from Auditors</h3>
+          <div id="notifList" class="muted">Loading...</div>
+        </div>
+      `;
+      loadRecords();
+      loadNotifications();
+    }
+
+    function loadRecords(){
+      callServer('getMyCARs', getToken()).then(rows => {
+        renderMyRecords_(rows);
+      }).catch(err => {
+        document.getElementById('recordsTable').innerHTML =
+          '<div class="empty-state">Could not load your records. Please refresh the page.</div>';
+        console.error('loadRecords failed:', err);
+      });
+    }
+
+    function renderMyRecords_(rows){
+      try {
+        const open = rows.filter(r => r.Status === 'Open').length;
+        const closed = rows.filter(r => r.Status === 'Closed').length;
+        const flagged = rows.filter(r => r.AdminFlag === 'Needs Attention').length;
+
+        const closedWithDates = rows.filter(r => r.Status === 'Closed' && r.CreatedAt && r.UpdatedAt);
+        let avgDays = '\u2014';
+        if(closedWithDates.length){
+          const totalDays = closedWithDates.reduce((sum, r) => {
+            const days = (new Date(r.UpdatedAt) - new Date(r.CreatedAt)) / 86400000;
+            return sum + (isFinite(days) && days >= 0 ? days : 0);
+          }, 0);
+          avgDays = (totalDays / closedWithDates.length).toFixed(1);
+        }
+
+        const todayStart = new Date(new Date().toDateString());
+        const overdue = rows.filter(r => r.Status !== 'Closed' && r.AdminDeadline && new Date(r.AdminDeadline) < todayStart).length;
+
+        document.getElementById('statsRow').innerHTML = statChip('Total', rows.length, 'neutral')
+          + statChip('Open', open, 'open') + statChip('Closed', closed, 'closed')
+          + statChip('Needs Attention', flagged, 'attention') + statChip('Overdue', overdue, overdue > 0 ? 'open' : 'neutral')
+          + statChip('Avg. Days to Close', avgDays, 'neutral');
+
+        if(rows.length === 0){
+          document.getElementById('recordsTable').innerHTML = '<div class="empty-state">No records for your department(s) yet. New findings raised by an Auditor will appear here.</div>';
+          return;
+        }
+        let html = '<table><thead><tr><th>CAR No.</th><th>Type</th><th>Date Issued</th><th>Details</th><th>ISO Clause</th><th>Company Document</th><th>Handled By</th><th>Status</th><th>Deadline</th><th>Evidence</th><th>Actions</th></tr></thead><tbody>';
+        rows.sort((a,b)=> new Date(b.CreatedAt) - new Date(a.CreatedAt));
+        rows.forEach(r => {
+          const flagged = r.AdminFlag === 'Needs Attention';
+          const canEdit = r.Status === 'Open' || flagged;
+          const isOverdue = r.Status !== 'Closed' && r.AdminDeadline && new Date(r.AdminDeadline) < todayStart;
+          const deadlineCell = r.AdminDeadline
+            ? '<span style="'+(isOverdue ? 'color:#B3261E;font-weight:700;' : '')+'">'+escapeHtml(fmtDate(r.AdminDeadline))+'</span>'
+            : '<span class="muted">\u2014</span>';
+
+          // Evidence links (all uploaded as General Evidence now)
+          let evLinks = [];
+          const genLinks = evidenceLinksOf_(r);
+          if (genLinks.length) evLinks.push('<a href="'+genLinks[0]+'" target="_blank">View'+(genLinks.length > 1 ? ' ('+genLinks.length+')' : '')+'</a>');
+          const evDisplay = evLinks.length > 0 ? evLinks.join(' | ') : '\u2014';
+
+          html += '<tr>'
+            + '<td>'+escapeHtml(r.CARNo)+'</td>'
+            + '<td>'+escapeHtml(r.Type || '')+'</td>'
+            + '<td>'+escapeHtml(r.DateIssued || '')+'</td>'
+            + '<td style="max-width:280px;">'+escapeHtml(String(r.Details || r.CorrectiveAction || '').substring(0,90))+(String(r.Details || r.CorrectiveAction || '').length>90?'...':'')+'</td>'
+            + '<td>'+(escapeHtml(r.ISOClause || '') || '<span class="muted">\u2014</span>')+'</td>'
+            + '<td>'+(escapeHtml(r.CompanyDocument || '') || '<span class="muted">\u2014</span>')+'</td>'
+            + '<td>'+(r.EmployeeName && r.EmployeeName !== '(Unassigned)' ? escapeHtml(r.EmployeeName) : '<span class="muted">Unclaimed</span>')+'</td>'
+            + '<td>'+badge(flagged ? 'Needs Attention' : r.Status)+'</td>'
+            + '<td>'+deadlineCell+'</td>'
+            + '<td>'+evDisplay+'</td>'
+            + '<td style="white-space:nowrap;">'
+              + '<button class="btn btn-outline" style="padding:6px 10px;font-size:12.5px;" onclick="openCarViewModal(\''+r.CARNo+'\')">View</button> '
+              + (canEdit ? '<a data-page="form" data-car="'+r.CARNo+'" href="#" class="btn btn-primary" style="padding:6px 10px;font-size:12.5px;">Edit</a> ' : '')
+              + '<button class="btn btn-outline" style="padding:6px 10px;font-size:12.5px;" onclick="exportCarRecord(\''+r.CARNo+'\', this)">Export</button>'
+            + '</td>'
+            + '</tr>';
+        });
+        html += '</tbody></table>';
+        document.getElementById('recordsTable').innerHTML = html;
+        wireInternalLinks(document.getElementById('recordsTable'));
+      } catch(err){
+        document.getElementById('recordsTable').innerHTML =
+          '<div class="empty-state">Could not display your records (unexpected data). Please refresh.</div>';
+        console.error('renderMyRecords_ failed:', err);
+      }
+    }
+
+    function statChip(label, count, cls){
+      return '<div class="badge '+cls+'" style="font-size:13px;padding:8px 16px;">'+label+': '+count+'</div>';
+    }
+
+    function badge(status){
+      const cls = status === 'Closed' ? 'closed' : (status === 'Needs Attention' ? 'attention' : 'open');
+      return '<span class="badge '+cls+'">'+escapeHtml(status || 'Open')+'</span>';
+    }
+
+    function loadNotifications(){
+      callServer('getMyNotifications', getToken()).then(rows => {
+        const box = document.getElementById('notifList');
+        if(!rows || rows.length === 0){ box.innerHTML = '<div class="empty-state">No notifications.</div>'; return; }
+        box.innerHTML = rows.slice(0,10).map(n =>
+          '<div style="padding:10px 0;border-bottom:1px solid #f0e6e6;">'
+          + '<div>'+escapeHtml(n.Message)+'</div>'
+          + '<div class="muted" style="font-size:12px;">'+(typeof fmtDateTime === 'function' ? fmtDateTime(n.CreatedAt) : n.CreatedAt)+'</div>'
+          + '</div>'
+        ).join('');
+      }).catch(err => {
+        document.getElementById('notifList').innerHTML =
+          '<div class="empty-state">Could not load notifications.</div>';
+        console.error('loadNotifications failed:', err);
+      });
+    }
+
+  </script>
+</body>
+</html>

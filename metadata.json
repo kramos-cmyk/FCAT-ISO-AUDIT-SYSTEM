@@ -1,0 +1,6 @@
+{
+  "name": "FCAT ISO Audit Management System",
+  "description": "ISO 9001:2015 Corrective Action Report (CAR), Nonconformity (NC), and Opportunity for Improvement (OFI) management portal for Fernandez College of Arts and Technology.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

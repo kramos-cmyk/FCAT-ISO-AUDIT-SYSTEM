@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <?!= include('NavBar'); ?>
+  <?!= include('ClientHelpers'); ?>
+  <script>
+    if(requireLogin()){
+      renderNav('terms');
+      document.getElementById('page-content').innerHTML = `
+        <div class="card">
+          <h2>Terms of Use</h2>
+          <p class="muted">Effective as of the date this system is deployed.</p>
+          <h3>1. Purpose</h3>
+          <p>This system is provided for the internal recording, tracking, and closure of ISO 9001:2015
+          audit findings, nonconformities (NC), and opportunities for improvement (OFI) for FCAT. It is
+          not intended for use outside of authorized company activities.</p>
+          <h3>2. Accounts and Access</h3>
+          <p>Each user is responsible for the confidentiality of their login credentials. Accounts may be
+          locked by an Auditor Account for policy violations, inactivity, or at the request of Management.
+          Do not share your password with anyone.</p>
+          <h3>3. Data Submitted</h3>
+          <p>All records, evidence files, and attachments submitted through this system become part of the
+          company's Quality Management System documentation and may be reviewed by auditors, department
+          heads, and Management.</p>
+          <h3>4. Accuracy of Information</h3>
+          <p>Users must submit accurate and complete information. Records with missing required fields or
+          missing evidence cannot be saved by design; attempting to submit falsified evidence is a
+          violation of company policy.</p>
+          <h3>5. Acceptable Use</h3>
+          <p>Do not use this system to upload content unrelated to audit and compliance activities.
+          Auditor Accounts may audit system logs.</p>
+          <h3>6. Changes</h3>
+          <p>These terms may be updated from time to time by the Quality Assurance / Management
+          Representative office.</p>
+        </div>
+
+        <div class="card">
+          <h2 style="margin-top:0;">Patch Notes / Version History</h2>
+          <p class="muted">A running record of updates made to this system since its initial release.</p>
+          ${renderPatchNotes_()}
+        </div>
+      `;
+    }
+
+    function renderPatchNotes_(){
+      const releases = [
+        {
+          version: '1.0', title: 'Initial Release',
+          items: [
+            'Core system for recording, tracking, and closing CAR / NC / OFI findings, with Employee and Admin roles.'
+          ]
+        },
+        {
+          version: '1.1', title: 'Stability & Bug Fixes',
+          items: [
+            'Fixed validation incorrectly requiring "Details" on Opportunities for Improvement.',
+            'Fixed the Save button getting stuck on "Saving..." after a record actually saved successfully.',
+            'Fixed garbled raw-JSON display of Contributing Factors in the Root Cause Analysis view.',
+            'Fixed unreliable page redirects after saving a record or logging in.'
+          ]
+        },
+        {
+          version: '1.2', title: 'Performance',
+          items: [
+            'Record updates now save in a single operation instead of one per changed field.',
+            'Cached company branding and PDF export logo lookups to speed up page loads.'
+          ]
+        },
+        {
+          version: '1.3', title: 'Data Integrity & Security Hardening',
+          items: [
+            'Fixed the Edit button opening a blank form instead of the selected record.',
+            'Added validation against invalid or unsafe evidence links, and against spreadsheet formula injection in free-text fields.',
+            'Closed-record edit locking is now enforced on the server, not just hidden in the interface.',
+            'Added the missing Auditor Follow-up / Verification fields to the form.'
+          ]
+        },
+        {
+          version: '1.4', title: 'Dashboards & Visual Redesign',
+          items: [
+            'Added ISO Clause and Company Document columns to record tables.',
+            'Introduced KPI summary cards, a page footer, and an Announcements feature.',
+            'Full visual redesign: refined color palette, typography, spacing, and component styling throughout.'
+          ]
+        },
+        {
+          version: '1.5', title: 'Workflow Overhaul: Auditors & Process Owners',
+          items: [
+            'Roles renamed to Auditor Account and Process Owner throughout the system.',
+            'Findings are now raised by an Auditor and routed to a Department, rather than being self-submitted by one employee.',
+            'Any Process Owner in the target department can claim and work an unclaimed finding.',
+            'Required fields now depend on who is completing the form: Finding Details for Auditors, Correction through Sign-off for Process Owners.'
+          ]
+        },
+        {
+          version: '1.6', title: 'Collaboration Features',
+          items: [
+            'Added comments on CAR records (posted by Auditors, visible to the assigned department).',
+            'Added Auditor-set deadlines, with automatic notifications to the responsible department.',
+            'Announcements can now include images (stored in Google Drive), can be edited, and keep a full edit history.',
+            'Added comments on Announcements, open to all users, with moderated deletion.'
+          ]
+        },
+        {
+          version: '1.7', title: 'Navigation & Structure',
+          items: [
+            'User Management split out into its own dedicated page.',
+            'Overview KPIs and the per-department breakdown split out into their own page, separate from the submissions list.'
+          ]
+        },
+        {
+          version: '1.8', title: 'Data Integrity Fixes',
+          items: [
+            'Fixed a spreadsheet schema issue where newly added columns could misalign data on records created before the change.',
+            'Fixed dates displaying as raw, unformatted timestamps in several places.',
+            'Fixed broken images on Announcement posts.'
+          ]
+        },
+        {
+          version: '1.9', title: 'Departments & Access',
+          items: [
+            'Added a centrally managed Department list to remove free-text data-entry errors.',
+            'Process Owners can now belong to more than one department.',
+            'Auditors can filter records and view KPIs by department.',
+            'CAR No. can now optionally be set manually by the Auditor when raising a finding, instead of always being auto-generated.'
+          ]
+        }
+      ];
+
+      return releases.map(r =>
+        '<div style="margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--line);">'
+        + '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;">'
+        + '<span class="badge neutral">v' + r.version + '</span>'
+        + '<strong style="color:var(--maroon-dark);">' + escapeHtml(r.title) + '</strong>'
+        + '</div>'
+        + '<ul style="margin:0;padding-left:20px;color:var(--text);font-size:14px;line-height:1.7;">'
+        + r.items.map(i => '<li>' + escapeHtml(i) + '</li>').join('')
+        + '</ul></div>'
+      ).join('');
+    }
+  </script>
+</body>
+</html>
