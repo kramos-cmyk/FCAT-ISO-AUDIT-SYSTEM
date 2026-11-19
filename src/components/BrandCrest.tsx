@@ -43,18 +43,20 @@ export function OfficialCarHeader({
   logoUrl,
   processGroup = 'Review & Improvement',
   pageLabel = 'Page _ of _',
+  className = 'mb-5 shadow-sm',
 }: {
   companyName?: string;
   standard?: string;
   logoUrl?: string;
   processGroup?: string;
   pageLabel?: string;
+  className?: string;
 }) {
   const [failed, setFailed] = useState(false);
   const src = failed ? OFFICIAL_SCHOOL_LOGO : resolveSchoolLogoSrc(logoUrl);
 
   return (
-    <div className="bg-white text-[#111111] border border-[#111111] mb-5 shadow-sm overflow-hidden font-serif">
+    <div className={`bg-white text-[#111111] border border-[#111111] overflow-hidden font-serif ${className}`}>
       {/* Top Row: School Seal | CORRECTIVE ACTION REPORT | Document Code & Rev. No. */}
       <div className="grid grid-cols-1 sm:grid-cols-[132px_1fr_220px]">
         <div className="border-b sm:border-b-0 sm:border-r border-[#111111] px-3 py-2.5 flex items-center justify-center bg-white">
