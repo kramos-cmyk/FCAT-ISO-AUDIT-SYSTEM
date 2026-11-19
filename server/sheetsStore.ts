@@ -318,19 +318,26 @@ export class GoogleSheetsStore implements DataStore {
           mimeType,
           body: Readable.from(buffer),
         },
+        supportsAllDrives: true,
         fields: 'id, webViewLink',
       });
       const fileId = resp.data.id;
       if (!fileId) return null;
-      await this.drive.permissions.create({
-        fileId,
-        requestBody: { role: 'reader', type: 'anyone' },
-      });
+      try {
+        await this.drive.permissions.create({
+          fileId,
+          supportsAllDrives: true,
+          requestBody: { role: 'reader', type: 'anyone' },
+        });
+      } catch (permErr) {
+        console.warn('[Drive] File uploaded, but could not set anyone-reader permission:', permErr instanceof Error ? permErr.message : permErr);
+      }
       return {
         url: resp.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`,
         thumbnailUrl: `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`,
       };
-    } catch {
+    } catch (err) {
+      console.error('[Drive] Upload failed, falling back to local disk:', err instanceof Error ? err.message : err);
       return null;
     }
   }

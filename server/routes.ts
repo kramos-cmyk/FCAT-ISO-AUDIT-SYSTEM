@@ -142,9 +142,11 @@ async function saveUploadedFile(
   // If connected to Google Sheets + Drive folder ID is configured, try Google Drive first
   const sheets = getSheetsInstance();
   const driveFolderId =
-    category === 'announcements'
+    (category === 'announcements'
       ? process.env.GOOGLE_DRIVE_ANNOUNCEMENT_FOLDER_ID
-      : process.env.GOOGLE_DRIVE_EVIDENCE_FOLDER_ID;
+      : process.env.GOOGLE_DRIVE_EVIDENCE_FOLDER_ID) ||
+    process.env.GOOGLE_DRIVE_MAIN_FOLDER_ID ||
+    process.env.GOOGLE_DRIVE_EVIDENCE_FOLDER_ID;
   if (sheets && driveFolderId) {
     const driveRes = await sheets.uploadFileToDrive(driveFolderId, finalName, file.mimetype, file.buffer);
     if (driveRes) {
