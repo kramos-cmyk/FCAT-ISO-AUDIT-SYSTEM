@@ -230,7 +230,22 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/auth/logout', (_req, res) => {
+  router.post('/auth/logout', async (req, res) => {
+    try {
+      const header = req.headers.authorization || '';
+      const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+      const decoded = token ? verifySessionToken(token) : null;
+      if (decoded?.userId) {
+        await getStore().appendLog({
+          Timestamp: nowIso(),
+          UserID: decoded.userId,
+          Action: 'LOGOUT',
+          Details: '',
+        });
+      }
+    } catch {
+      // ignore logout log failure
+    }
     res.json({ ok: true });
   });
 
@@ -1378,9 +1393,23 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.get('/admin/audit-logs', requireSystemAdmin, async (_req, res) => {
+  router.get('/admin/audit-logs', requireAuditor, async (req, res) => {
     try {
-      res.json(await getStore().listLogs(100));
+      const rawLimit = Number(req.query.limit || 200);
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 10), 500) : 200;
+      const store = getStore();
+      const [logs, users] = await Promise.all([store.listLogs(limit), store.listUsers()]);
+      const userMap = new Map(users.map((u) => [u.UserID, u]));
+      const enriched = logs.map((log) => {
+        const actor = userMap.get(log.UserID);
+        return {
+          ...log,
+          UserName: actor?.Name || '',
+          UserEmail: actor?.Email || '',
+          UserRole: actor ? normalizeUserRole(actor.Role) : '',
+        };
+      });
+      res.json(enriched);
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load logs.' });
     }

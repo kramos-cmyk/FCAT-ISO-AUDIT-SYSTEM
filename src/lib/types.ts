@@ -157,4 +157,7 @@ export interface AuditLogItem {
   UserID: string;
   Action: string;
   Details: string;
+  UserName?: string;
+  UserEmail?: string;
+  UserRole?: string;
 }

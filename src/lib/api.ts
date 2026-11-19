@@ -348,5 +348,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ direction, spreadsheetId, serviceAccountJson }),
     }),
-  getAuditLogs: () => request<AuditLogItem[]>('/admin/audit-logs'),
+  getAuditLogs: (limit = 200) =>
+    request<AuditLogItem[]>(`/admin/audit-logs?limit=${encodeURIComponent(String(limit))}`),
 };
