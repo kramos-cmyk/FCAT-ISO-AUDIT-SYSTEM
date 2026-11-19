@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ClipboardList, ExternalLink, History, Plus, RefreshCw, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ClipboardList, ExternalLink, History, Plus, RefreshCw, Search } from 'lucide-react';
 import { api } from '../lib/api';
 import { evidenceLinksOf, fmtDate, fmtDateTime, isRecordOverdue, roleLabel, safeUrl } from '../lib/format';
 import type { AuditLogItem, CarRecord } from '../lib/types';
@@ -269,6 +269,8 @@ export function AdminDashboardPage({
   const [auditError, setAuditError] = useState('');
   const [auditCategory, setAuditCategory] = useState<AuditCategory>('all');
   const [auditSearch, setAuditSearch] = useState('');
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPageSize, setAuditPageSize] = useState(15);
 
   // Flag modal
   const [flagCarNo, setFlagCarNo] = useState<string | null>(null);
@@ -306,7 +308,7 @@ export function AdminDashboardPage({
     setAuditLoading(true);
     setAuditError('');
     try {
-      const logs = await api.getAuditLogs(200);
+      const logs = await api.getAuditLogs(500);
       setAuditLogs(logs || []);
       setAuditLoaded(true);
     } catch (err) {
@@ -388,6 +390,28 @@ export function AdminDashboardPage({
       return true;
     });
   }, [auditLogs, auditCategory, auditSearch]);
+
+  const auditTotalPages = Math.max(1, Math.ceil(filteredAuditLogs.length / auditPageSize));
+  const safeAuditPage = Math.min(auditPage, auditTotalPages);
+
+  const paginatedAuditLogs = useMemo(() => {
+    const start = (safeAuditPage - 1) * auditPageSize;
+    return filteredAuditLogs.slice(start, start + auditPageSize);
+  }, [filteredAuditLogs, safeAuditPage, auditPageSize]);
+
+  const auditPageNumbers = useMemo(() => {
+    if (auditTotalPages <= 7) {
+      return Array.from({ length: auditTotalPages }, (_, i) => i + 1);
+    }
+    const pages: Array<number | 'ellipsis'> = [1];
+    const start = Math.max(2, safeAuditPage - 1);
+    const end = Math.min(auditTotalPages - 1, safeAuditPage + 1);
+    if (start > 2) pages.push('ellipsis');
+    for (let p = start; p <= end; p++) pages.push(p);
+    if (end < auditTotalPages - 1) pages.push('ellipsis');
+    pages.push(auditTotalPages);
+    return pages;
+  }, [auditTotalPages, safeAuditPage]);
 
   const handleFlagSubmit = async () => {
     if (!flagCarNo || !flagMessage.trim()) {
@@ -753,7 +777,10 @@ export function AdminDashboardPage({
               <select
                 aria-label="Filter by activity category"
                 value={auditCategory}
-                onChange={(e) => setAuditCategory(e.target.value as AuditCategory)}
+                onChange={(e) => {
+                  setAuditCategory(e.target.value as AuditCategory);
+                  setAuditPage(1);
+                }}
                 className="rounded-lg border border-[#EAD9D4] px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#6B1A25]"
               >
                 <option value="all">All activities</option>
@@ -769,7 +796,10 @@ export function AdminDashboardPage({
                 <input
                   type="text"
                   value={auditSearch}
-                  onChange={(e) => setAuditSearch(e.target.value)}
+                  onChange={(e) => {
+                    setAuditSearch(e.target.value);
+                    setAuditPage(1);
+                  }}
                   placeholder="Search user, action, CAR..."
                   className="rounded-lg border border-[#EAD9D4] pl-9 pr-3 py-2 text-sm bg-white focus:outline-none focus:border-[#6B1A25] w-56"
                 />
@@ -808,7 +838,7 @@ export function AdminDashboardPage({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#F0E4DF]">
-                  {filteredAuditLogs.map((log, idx) => {
+                  {paginatedAuditLogs.map((log, idx) => {
                     const meta = describeAuditAction(log.Action);
                     const detailStr = String(log.Details || '').trim();
                     const isCarRef = Boolean(detailStr && (carNoSet.has(detailStr) || /^(CAR|NC|OFI)-/i.test(detailStr)));
@@ -860,6 +890,84 @@ export function AdminDashboardPage({
                   })}
                 </tbody>
               </table>
+
+              {/* Pagination Controls */}
+              <div className="mt-4 pt-4 border-t border-[#EAD9D4] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-[#7A6F6F]">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="tabular-nums">
+                    Showing{' '}
+                    <strong className="text-[#2B2323]">
+                      {(safeAuditPage - 1) * auditPageSize + 1}
+                    </strong>
+                    –
+                    <strong className="text-[#2B2323]">
+                      {Math.min(safeAuditPage * auditPageSize, filteredAuditLogs.length)}
+                    </strong>{' '}
+                    of <strong className="text-[#2B2323]">{filteredAuditLogs.length}</strong> events
+                  </span>
+
+                  <label className="inline-flex items-center gap-1.5">
+                    <span>Rows:</span>
+                    <select
+                      aria-label="Rows per page"
+                      value={auditPageSize}
+                      onChange={(e) => {
+                        setAuditPageSize(Number(e.target.value));
+                        setAuditPage(1);
+                      }}
+                      className="rounded-md border border-[#EAD9D4] bg-white px-2 py-1 text-xs text-[#2B2323] focus:outline-none focus:border-[#6B1A25]"
+                    >
+                      <option value={10}>10</option>
+                      <option value={15}>15</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1 tabular-nums">
+                  <button
+                    type="button"
+                    disabled={safeAuditPage <= 1}
+                    onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-[#EAD9D4] bg-white text-[#4A1219] font-semibold hover:border-[#6B1A25] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    Prev
+                  </button>
+
+                  {auditPageNumbers.map((item, idx) =>
+                    item === 'ellipsis' ? (
+                      <span key={`e-${idx}`} className="px-2 py-1 text-[#7A6F6F]">
+                        ...
+                      </span>
+                    ) : (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => setAuditPage(item)}
+                        className={`min-w-[30px] px-2 py-1.5 rounded-md border font-semibold cursor-pointer ${
+                          item === safeAuditPage
+                            ? 'bg-[#6B1A25] border-[#6B1A25] text-white'
+                            : 'bg-white border-[#EAD9D4] text-[#4A1219] hover:border-[#6B1A25]'
+                        }`}
+                      >
+                        {item}
+                      </button>
+                    )
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={safeAuditPage >= auditTotalPages}
+                    onClick={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-[#EAD9D4] bg-white text-[#4A1219] font-semibold hover:border-[#6B1A25] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Next
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>

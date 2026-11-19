@@ -22,7 +22,17 @@ export async function generateCarPdfBuffer(
   company: Record<string, string>
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', margin: 42, bufferPages: true });
+    const HEADER_X = 42;
+    const HEADER_Y = 34;
+    const TOP_ROW_H = 62;
+    const BOT_ROW_H = 30;
+    const HEADER_BOTTOM = HEADER_Y + TOP_ROW_H + BOT_ROW_H + 10;
+
+    const doc = new PDFDocument({
+      size: 'LETTER',
+      margins: { top: HEADER_BOTTOM, bottom: 42, left: 42, right: 42 },
+      bufferPages: true,
+    });
     const chunks: Buffer[] = [];
     doc.on('data', (c) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -40,15 +50,11 @@ export async function generateCarPdfBuffer(
     const ensureSpace = (needed: number) => {
       if (doc.y + needed > doc.page.height - doc.page.margins.bottom - 20) {
         doc.addPage();
-        drawHeader(doc.bufferedPageRange().count);
+        doc.y = HEADER_BOTTOM;
       }
     };
 
     const logoPath = resolveSchoolLogoPath();
-    const HEADER_X = 42;
-    const HEADER_Y = 34;
-    const TOP_ROW_H = 62;
-    const BOT_ROW_H = 30;
     const COL_LOGO_W = 112;
     const COL_META_W = 152;
     const COL_TITLE_W = pageWidth - COL_LOGO_W - COL_META_W;
@@ -57,7 +63,7 @@ export async function generateCarPdfBuffer(
     const META_X = HEADER_X + pageWidth - COL_META_W;
     const META_SPLIT_X = META_X + COL_META_W / 2;
 
-    const drawHeader = (_pageNum: number) => {
+    const drawHeader = (pageNum: number, totalPages: number) => {
       const x = HEADER_X;
       const y = HEADER_Y;
       const totalH = TOP_ROW_H + BOT_ROW_H;
@@ -167,7 +173,7 @@ export async function generateCarPdfBuffer(
         .font('Times-Bold')
         .text(FO_RI_05_META.effectivityDate, { lineBreak: false });
 
-      // Bottom-right Page No. label (page X of Y value stamped at end across all pages)
+      // Bottom-right Page No. label and Page X of Y value
       doc
         .font('Times-Bold')
         .fontSize(9.5)
@@ -175,9 +181,15 @@ export async function generateCarPdfBuffer(
           width: COL_META_W / 2 - 10,
           lineBreak: false,
         });
+      doc
+        .font('Times-Roman')
+        .fontSize(9.5)
+        .text(`Page ${pageNum} of ${totalPages}`, META_SPLIT_X + 6, botY + 10, {
+          width: COL_META_W / 2 - 10,
+          lineBreak: false,
+        });
 
       doc.restore();
-      doc.y = y + totalH + 10;
     };
 
     const banner = (title: string) => {
@@ -192,8 +204,20 @@ export async function generateCarPdfBuffer(
     };
 
     const kvRow = (pairs: Array<[string, string | undefined]>) => {
-      ensureSpace(26);
       const colW = pageWidth / pairs.length;
+      const estimatedHeights = pairs.map(([label, val]) => {
+        const lh = doc.font('Helvetica-Bold').fontSize(8).heightOfString(label.toUpperCase(), { width: colW - 10 });
+        const valueText = val && String(val).trim() ? String(val) : '—';
+        const vh = doc.font('Helvetica').fontSize(9.5).heightOfString(valueText, { width: colW - 10 });
+        return lh + vh + 8;
+      });
+      const rowHeight = Math.max(26, ...estimatedHeights);
+      const maxSinglePageHeight = doc.page.height - doc.page.margins.top - doc.page.margins.bottom - 20;
+      if (rowHeight <= maxSinglePageHeight) {
+        ensureSpace(rowHeight);
+      } else {
+        ensureSpace(32);
+      }
       const startY = doc.y;
       let maxY = startY;
       pairs.forEach(([label, val], i) => {
@@ -252,7 +276,7 @@ export async function generateCarPdfBuffer(
         const rowH = Math.max(20, ...heights) + 10;
         if (doc.y + rowH > doc.page.height - doc.page.margins.bottom - 20) {
           doc.addPage();
-          drawHeader(doc.bufferedPageRange().count);
+          doc.y = HEADER_BOTTOM;
           drawHeaderRow();
         }
         const y = doc.y;
@@ -272,8 +296,8 @@ export async function generateCarPdfBuffer(
       doc.y += 8;
     };
 
-    // Page 1
-    drawHeader(1);
+    // Page 1 (top margin HEADER_BOTTOM already reserves space for the letterhead)
+    doc.y = HEADER_BOTTOM;
     const statusLabel = rec.AdminFlag === 'Needs Attention' ? 'Needs Attention' : rec.Status || 'Open';
     doc.save();
     doc.rect(42, doc.y, pageWidth, 24).fill(BG_SOFT);
@@ -444,16 +468,7 @@ export async function generateCarPdfBuffer(
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i);
-      doc
-        .save()
-        .fillColor('#000000')
-        .font('Times-Roman')
-        .fontSize(9.5)
-        .text(`Page ${i + 1} of ${range.count}`, META_SPLIT_X + 6, HEADER_Y + TOP_ROW_H + 10, {
-          width: COL_META_W / 2 - 10,
-          lineBreak: false,
-        })
-        .restore();
+      drawHeader(i + 1, range.count);
     }
 
     doc.end();
