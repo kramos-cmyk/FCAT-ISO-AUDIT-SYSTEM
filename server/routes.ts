@@ -11,9 +11,12 @@ import {
 import { generateCarPdfBuffer } from './pdfExport.js';
 import {
   hashPassword,
+  isAuditorOrAdmin,
+  isSystemAdmin,
   isValidEvidenceUrl,
   isValidHttpsOrUploadUrl,
   newId,
+  normalizeUserRole,
   nowIso,
   parseJsonArray,
   parseWhyFactors,
@@ -63,9 +66,19 @@ function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   next();
 }
 
-function requireAdmin(req: AuthedRequest, res: Response, next: NextFunction) {
+function requireSystemAdmin(req: AuthedRequest, res: Response, next: NextFunction) {
   requireAuth(req, res, () => {
-    if (req.user?.role !== 'Admin') {
+    if (!isSystemAdmin(req.user?.role)) {
+      res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
+      return;
+    }
+    next();
+  });
+}
+
+function requireAuditor(req: AuthedRequest, res: Response, next: NextFunction) {
+  requireAuth(req, res, () => {
+    if (!isAuditorOrAdmin(req.user?.role)) {
       res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
       return;
     }
@@ -205,7 +218,7 @@ export function createApiRouter(): express.Router {
         userId: user.UserID,
         name: user.Name,
         email: user.Email,
-        role: user.Role === 'Admin' ? 'Admin' : 'Employee',
+        role: normalizeUserRole(user.Role),
         department: user.Department,
         position: user.Position,
       };
@@ -249,7 +262,7 @@ export function createApiRouter(): express.Router {
           userId: fresh.UserID,
           name: fresh.Name,
           email: fresh.Email,
-          role: fresh.Role,
+          role: normalizeUserRole(fresh.Role),
           department: fresh.Department,
           position: fresh.Position,
         },
@@ -282,7 +295,7 @@ export function createApiRouter(): express.Router {
   });
 
   // ---- USERS ----
-  router.get('/users', requireAdmin, async (_req, res) => {
+  router.get('/users', requireAuditor, async (_req, res) => {
     try {
       const users = await getStore().listUsers();
       res.json(
@@ -290,7 +303,7 @@ export function createApiRouter(): express.Router {
           userId: u.UserID,
           name: u.Name,
           email: u.Email,
-          role: u.Role,
+          role: normalizeUserRole(u.Role),
           department: u.Department,
           position: u.Position,
           status: u.Status,
@@ -301,7 +314,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/users', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/users', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const data = req.body || {};
       const name = String(data.name || '').trim();
@@ -318,6 +331,11 @@ export function createApiRouter(): express.Router {
         res.json({ ok: false, error: 'Password must be at least 8 characters.' });
         return;
       }
+      const role = normalizeUserRole(data.role);
+      if (role === 'Admin' && !isSystemAdmin(req.user!.role)) {
+        res.status(403).json({ ok: false, error: 'Only a System Administrator can create System Administrator accounts.' });
+        return;
+      }
       const store = getStore();
       const existing = await store.findUserByEmail(email);
       if (existing) {
@@ -325,7 +343,6 @@ export function createApiRouter(): express.Router {
         return;
       }
       const userId = newId('U');
-      const role = data.role === 'Admin' ? 'Admin' : 'Employee';
       const departmentStr = departments.join(', ');
       const position = String(data.position || '').trim();
       await store.createUser({
@@ -339,7 +356,7 @@ export function createApiRouter(): express.Router {
         Status: 'Active',
         CreatedAt: nowIso(),
       });
-      await store.appendLog({ Timestamp: nowIso(), UserID: req.user!.userId, Action: 'CREATE_USER', Details: email });
+      await store.appendLog({ Timestamp: nowIso(), UserID: req.user!.userId, Action: 'CREATE_USER', Details: `${email} (${role})` });
       res.json({
         ok: true,
         user: { userId, name, email, role, department: departmentStr, position, status: 'Active' },
@@ -349,7 +366,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.put('/users/:userId', requireAdmin, async (req: AuthedRequest, res) => {
+  router.put('/users/:userId', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const { userId } = req.params;
       const data = req.body || {};
@@ -358,6 +375,12 @@ export function createApiRouter(): express.Router {
       const existing = all.find((u) => u.UserID === userId);
       if (!existing) {
         res.json({ ok: false, error: 'User not found.' });
+        return;
+      }
+      const existingRole = normalizeUserRole(existing.Role);
+      const role = normalizeUserRole(data.role);
+      if (!isSystemAdmin(req.user!.role) && (existingRole === 'Admin' || role === 'Admin')) {
+        res.status(403).json({ ok: false, error: 'Only a System Administrator can modify System Administrator accounts.' });
         return;
       }
       const name = String(data.name || '').trim();
@@ -373,9 +396,8 @@ export function createApiRouter(): express.Router {
         res.json({ ok: false, error: 'Another user already has that email.' });
         return;
       }
-      const role = data.role === 'Admin' ? 'Admin' : 'Employee';
-      if (userId === req.user!.userId && existing.Role === 'Admin' && role !== 'Admin') {
-        res.json({ ok: false, error: 'You cannot remove Auditor Account access from your own account.' });
+      if (userId === req.user!.userId && existingRole !== role) {
+        res.json({ ok: false, error: 'You cannot change your own role.' });
         return;
       }
       const updates: Record<string, string> = {
@@ -411,7 +433,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/users/:userId/lock', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/users/:userId/lock', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const { userId } = req.params;
       const lock = Boolean(req.body?.lock);
@@ -420,6 +442,11 @@ export function createApiRouter(): express.Router {
         return;
       }
       const store = getStore();
+      const target = await store.findUserById(userId);
+      if (target && normalizeUserRole(target.Role) === 'Admin' && !isSystemAdmin(req.user!.role)) {
+        res.status(403).json({ ok: false, error: 'Only a System Administrator can lock or unlock System Administrator accounts.' });
+        return;
+      }
       const ok = await store.updateUser(userId, { Status: lock ? 'Locked' : 'Active' });
       await store.appendLog({
         Timestamp: nowIso(),
@@ -433,12 +460,12 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.get('/process-owners', requireAdmin, async (_req, res) => {
+  router.get('/process-owners', requireAuditor, async (_req, res) => {
     try {
       const users = await getStore().listUsers();
       res.json(
         users
-          .filter((u) => u.Role === 'Employee' && u.Status === 'Active')
+          .filter((u) => normalizeUserRole(u.Role) === 'Employee' && u.Status === 'Active')
           .map((u) => ({ userId: u.UserID, name: u.Name, department: u.Department }))
           .sort((a, b) => a.name.localeCompare(b.name))
       );
@@ -447,7 +474,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  // ---- DEPARTMENTS ----
+  // ---- DEPARTMENTS (System Administrator only for mutations on Company Details) ----
   router.get('/departments', requireAuth, async (_req, res) => {
     try {
       const depts = await getStore().listDepartments();
@@ -457,7 +484,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/departments', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/departments', requireSystemAdmin, async (req: AuthedRequest, res) => {
     try {
       const name = String(req.body?.name || '').trim();
       if (!name) {
@@ -473,7 +500,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.delete('/departments/:name', requireAdmin, async (req: AuthedRequest, res) => {
+  router.delete('/departments/:name', requireSystemAdmin, async (req: AuthedRequest, res) => {
     try {
       const name = decodeURIComponent(req.params.name || '').trim();
       const store = getStore();
@@ -492,7 +519,7 @@ export function createApiRouter(): express.Router {
     try {
       const store = getStore();
       const all = await store.listCARs();
-      if (req.user!.role === 'Admin') {
+      if (isAuditorOrAdmin(req.user!.role)) {
         res.json(all);
         return;
       }
@@ -512,7 +539,7 @@ export function createApiRouter(): express.Router {
         res.json(null);
         return;
       }
-      if (req.user!.role !== 'Admin') {
+      if (!isAuditorOrAdmin(req.user!.role)) {
         const freshUser = await store.findUserById(req.user!.userId);
         const userDept = freshUser ? freshUser.Department : req.user!.department;
         if (!userHasDepartment(userDept, rec.Department)) {
@@ -526,7 +553,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/cars', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/cars', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const payload: Record<string, unknown> = { ...(req.body || {}) };
       sanitizeCarPayload(payload);
@@ -651,7 +678,7 @@ export function createApiRouter(): express.Router {
         res.json({ ok: false, error: 'Record not found.' });
         return;
       }
-      const isAdmin = req.user!.role === 'Admin';
+      const isAdmin = isAuditorOrAdmin(req.user!.role);
       if (!isAdmin) {
         const freshUser = await store.findUserById(req.user!.userId);
         const userDept = freshUser ? freshUser.Department : req.user!.department;
@@ -731,7 +758,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/cars/:carNo/flag', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/cars/:carNo/flag', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const { carNo } = req.params;
       const note = String(req.body?.note || '').trim();
@@ -767,7 +794,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/cars/:carNo/close', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/cars/:carNo/close', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const { carNo } = req.params;
       const store = getStore();
@@ -781,7 +808,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/cars/:carNo/reopen', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/cars/:carNo/reopen', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const { carNo } = req.params;
       const store = getStore();
@@ -797,7 +824,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/cars/:carNo/deadline', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/cars/:carNo/deadline', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const { carNo } = req.params;
       const deadline = String(req.body?.deadline || '').trim();
@@ -836,7 +863,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/cars/:carNo/followups', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/cars/:carNo/followups', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const { carNo } = req.params;
       const store = getStore();
@@ -880,7 +907,7 @@ export function createApiRouter(): express.Router {
         res.json([]);
         return;
       }
-      if (req.user!.role !== 'Admin') {
+      if (!isAuditorOrAdmin(req.user!.role)) {
         const freshUser = await store.findUserById(req.user!.userId);
         const userDept = freshUser ? freshUser.Department : req.user!.department;
         if (!userHasDepartment(userDept, rec.Department)) {
@@ -894,7 +921,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/cars/:carNo/comments', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/cars/:carNo/comments', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const { carNo } = req.params;
       const msg = String(req.body?.message || '').trim();
@@ -948,7 +975,7 @@ export function createApiRouter(): express.Router {
         res.status(404).json({ ok: false, error: 'Record not found.' });
         return;
       }
-      if (req.user!.role !== 'Admin') {
+      if (!isAuditorOrAdmin(req.user!.role)) {
         const freshUser = await store.findUserById(req.user!.userId);
         const userDept = freshUser ? freshUser.Department : req.user!.department;
         if (!userHasDepartment(userDept, rec.Department)) {
@@ -991,7 +1018,7 @@ export function createApiRouter(): express.Router {
       const ok = await getStore().markNotificationRead(
         req.params.id,
         req.user!.userId,
-        req.user!.role === 'Admin'
+        isAuditorOrAdmin(req.user!.role)
       );
       res.json({ ok });
     } catch (err) {
@@ -1008,7 +1035,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.put('/company', requireAdmin, async (req: AuthedRequest, res) => {
+  router.put('/company', requireSystemAdmin, async (req: AuthedRequest, res) => {
     try {
       const updates: Record<string, string> = {};
       const allowed = ['CompanyName', 'Address', 'Standard', 'LogoUrl', 'PrimaryColor', 'AccentGreen', 'AccentGold'];
@@ -1088,7 +1115,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/uploads/announcement-image', requireAdmin, upload.single('file'), async (req: AuthedRequest, res) => {
+  router.post('/uploads/announcement-image', requireAuditor, upload.single('file'), async (req: AuthedRequest, res) => {
     try {
       if (!req.file) {
         res.json({ ok: false, error: 'No file provided.' });
@@ -1111,7 +1138,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/uploads/template', requireAdmin, upload.single('file'), async (req: AuthedRequest, res) => {
+  router.post('/uploads/template', requireSystemAdmin, upload.single('file'), async (req: AuthedRequest, res) => {
     try {
       if (!req.file) {
         res.json({ ok: false, error: 'No file provided.' });
@@ -1141,7 +1168,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/announcements', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/announcements', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const title = String(req.body?.title || '').trim();
       const message = String(req.body?.message || '').trim();
@@ -1172,7 +1199,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.put('/announcements/:id', requireAdmin, async (req: AuthedRequest, res) => {
+  router.put('/announcements/:id', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const { id } = req.params;
       const title = String(req.body?.title || '').trim();
@@ -1221,7 +1248,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.delete('/announcements/:id', requireAdmin, async (req: AuthedRequest, res) => {
+  router.delete('/announcements/:id', requireAuditor, async (req: AuthedRequest, res) => {
     try {
       const store = getStore();
       const ok = await store.deleteAnnouncement(req.params.id);
@@ -1298,7 +1325,7 @@ export function createApiRouter(): express.Router {
       const result = await store.deleteAnnouncementComment(
         req.params.commentId,
         req.user!.userId,
-        req.user!.role === 'Admin'
+        isAuditorOrAdmin(req.user!.role)
       );
       if (result === 'forbidden') {
         res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
@@ -1320,18 +1347,18 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  // ---- ADMIN STORAGE & EXISTING GOOGLE SHEETS SYNC ----
-  router.get('/admin/storage-status', requireAdmin, (_req, res) => {
+  // ---- SYSTEM ADMIN STORAGE & EXISTING GOOGLE SHEETS SYNC (Company Details only) ----
+  router.get('/admin/storage-status', requireSystemAdmin, (_req, res) => {
     res.json(getStorageStatus());
   });
 
-  router.post('/admin/sheets-test', requireAdmin, async (req, res) => {
+  router.post('/admin/sheets-test', requireSystemAdmin, async (req, res) => {
     const spreadsheetId = String(req.body?.spreadsheetId || process.env.GOOGLE_SPREADSHEET_ID || '');
     const serviceAccountJson = req.body?.serviceAccountJson ? String(req.body.serviceAccountJson) : undefined;
     res.json(await testGoogleSheetConnection(spreadsheetId, serviceAccountJson));
   });
 
-  router.post('/admin/sheets-sync', requireAdmin, async (req: AuthedRequest, res) => {
+  router.post('/admin/sheets-sync', requireSystemAdmin, async (req: AuthedRequest, res) => {
     try {
       const direction = req.body?.direction === 'push-to-sheets' ? 'push-to-sheets' : 'pull-from-sheets';
       const spreadsheetId = req.body?.spreadsheetId ? String(req.body.spreadsheetId) : undefined;
@@ -1351,7 +1378,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.get('/admin/audit-logs', requireAdmin, async (_req, res) => {
+  router.get('/admin/audit-logs', requireSystemAdmin, async (_req, res) => {
     try {
       res.json(await getStore().listLogs(100));
     } catch (err) {

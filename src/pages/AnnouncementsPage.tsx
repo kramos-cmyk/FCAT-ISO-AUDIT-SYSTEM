@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { History, ImagePlus, Plus, Send, Trash2, X } from 'lucide-react';
 import { api } from '../lib/api';
-import { driveImageSrc, fmtDateTime, safeUrl } from '../lib/format';
+import { driveImageSrc, fmtDateTime, isAuditorRole, safeUrl } from '../lib/format';
 import type {
   AnnouncementComment,
   AnnouncementHistoryItem,
@@ -13,7 +13,7 @@ import { useToast } from '../components/Toast';
 
 export function AnnouncementsPage({ user }: { user: SessionUser }) {
   const { showToast } = useToast();
-  const isAdmin = user.role === 'Admin';
+  const isAdmin = isAuditorRole(user.role);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [commentsByAnn, setCommentsByAnn] = useState<Record<string, AnnouncementComment[]>>({});
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
@@ -309,9 +309,9 @@ export function AnnouncementsPage({ user }: { user: SessionUser }) {
                                   <div className="flex items-center justify-between gap-2">
                                     <span className="text-xs font-semibold text-[#2B2323]">
                                       {c.UserName}
-                                      {c.Role === 'Admin' && (
+                                      {isAuditorRole(c.Role) && (
                                         <span className="ml-1.5 text-[10px] font-semibold text-[#4A1219] bg-[#F3E8DE] px-1.5 py-0.5 rounded">
-                                          Auditor
+                                          {c.Role === 'Admin' ? 'System Admin' : 'Auditor'}
                                         </span>
                                       )}
                                     </span>

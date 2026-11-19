@@ -1,7 +1,23 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { SESSION_HOURS, WHY_FACTORS } from './constants.js';
-import type { SessionUser, WhyWhyFactors } from './types.js';
+import type { SessionUser, UserRole, WhyWhyFactors } from './types.js';
+
+export function normalizeUserRole(raw: unknown): UserRole {
+  const val = String(raw || '').trim();
+  if (val === 'Admin' || val === 'System Administrator') return 'Admin';
+  if (val === 'Auditor' || val === 'Auditor Account') return 'Auditor';
+  return 'Employee';
+}
+
+export function isSystemAdmin(role: unknown): boolean {
+  return normalizeUserRole(role) === 'Admin';
+}
+
+export function isAuditorOrAdmin(role: unknown): boolean {
+  const r = normalizeUserRole(role);
+  return r === 'Admin' || r === 'Auditor';
+}
 
 const EPHEMERAL_FALLBACK_SECRET = crypto.randomBytes(32).toString('hex');
 

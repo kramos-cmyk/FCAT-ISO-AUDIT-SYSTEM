@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { api } from '../lib/api';
-import type { ManagedUser, SessionUser } from '../lib/types';
+import { isSystemAdminRole, roleLabel } from '../lib/format';
+import type { ManagedUser, SessionUser, UserRole } from '../lib/types';
 import { StatusLabel } from '../components/StatusLabel';
 import { useToast } from '../components/Toast';
 
 export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
   const { showToast } = useToast();
+  const isSysAdmin = isSystemAdminRole(currentUser.role);
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -20,7 +22,7 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [position, setPosition] = useState('');
-  const [role, setRole] = useState<'Employee' | 'Admin'>('Employee');
+  const [role, setRole] = useState<UserRole>('Employee');
   const [selectedDepts, setSelectedDepts] = useState<string[]>([]);
   const [deptError, setDeptError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -44,7 +46,7 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
 
   const kpis = useMemo(() => {
     const total = users.length;
-    const admins = users.filter((u) => u.role === 'Admin').length;
+    const admins = users.filter((u) => u.role === 'Admin' || u.role === 'Auditor').length;
     const employees = users.filter((u) => u.role === 'Employee').length;
     const locked = users.filter((u) => u.status === 'Locked').length;
     return { total, admins, employees, locked };
@@ -226,7 +228,8 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
               className="rounded-lg border border-[#EAD9D4] px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#6B1A25]"
             >
               <option value="">All roles</option>
-              <option value="Admin">Auditor Account</option>
+              <option value="Admin">System Administrator</option>
+              <option value="Auditor">Auditor Account</option>
               <option value="Employee">Process Owner</option>
             </select>
             <div className="relative">
@@ -271,12 +274,17 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
               <tbody className="divide-y divide-[#F0E4DF]">
                 {filtered.map((u) => {
                   const isSelf = u.userId === currentUser.userId;
+                  const targetRestricted = !isSysAdmin && u.role === 'Admin';
                   return (
                     <tr key={u.userId} className="hover:bg-[#FCF6F3]">
                       <td className="py-3 pr-3 font-medium">{u.name}</td>
                       <td className="py-3 pr-3">{u.email}</td>
                       <td className="py-3 pr-3">
-                        {u.role === 'Admin' ? <StatusLabel status="Auditor Account" /> : 'Process Owner'}
+                        {u.role === 'Admin' || u.role === 'Auditor' ? (
+                          <StatusLabel status={roleLabel(u.role)} />
+                        ) : (
+                          'Process Owner'
+                        )}
                       </td>
                       <td className="py-3 pr-3">{u.department}</td>
                       <td className="py-3 pr-3">{u.position || <span className="text-[#7A6F6F]">—</span>}</td>
@@ -284,34 +292,40 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
                         <StatusLabel status={u.status} />
                       </td>
                       <td className="py-3 text-right whitespace-nowrap space-x-1.5">
-                        <button
-                          type="button"
-                          onClick={() => openModal(u)}
-                          className="px-2.5 py-1 text-xs font-semibold rounded-md border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219] cursor-pointer"
-                        >
-                          Edit
-                        </button>
-                        {isSelf ? (
-                          <button
-                            type="button"
-                            disabled
-                            title="You cannot lock your own account"
-                            className="px-2.5 py-1 text-xs font-semibold rounded-md border border-[#EAD9D4] text-[#7A6F6F] opacity-50 cursor-not-allowed"
-                          >
-                            Lock
-                          </button>
+                        {targetRestricted ? (
+                          <span className="text-xs text-[#7A6F6F]">Restricted</span>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleToggleLock(u.userId, u.status !== 'Locked')}
-                            className={`px-2.5 py-1 text-xs font-semibold rounded-md cursor-pointer ${
-                              u.status === 'Locked'
-                                ? 'bg-[#2F6D39] hover:bg-[#255A2D] text-white'
-                                : 'border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219]'
-                            }`}
-                          >
-                            {u.status === 'Locked' ? 'Unlock' : 'Lock'}
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => openModal(u)}
+                              className="px-2.5 py-1 text-xs font-semibold rounded-md border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219] cursor-pointer"
+                            >
+                              Edit
+                            </button>
+                            {isSelf ? (
+                              <button
+                                type="button"
+                                disabled
+                                title="You cannot lock your own account"
+                                className="px-2.5 py-1 text-xs font-semibold rounded-md border border-[#EAD9D4] text-[#7A6F6F] opacity-50 cursor-not-allowed"
+                              >
+                                Lock
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleLock(u.userId, u.status !== 'Locked')}
+                                className={`px-2.5 py-1 text-xs font-semibold rounded-md cursor-pointer ${
+                                  u.status === 'Locked'
+                                    ? 'bg-[#2F6D39] hover:bg-[#255A2D] text-white'
+                                    : 'border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219]'
+                                }`}
+                              >
+                                {u.status === 'Locked' ? 'Unlock' : 'Lock'}
+                              </button>
+                            )}
+                          </>
                         )}
                       </td>
                     </tr>
@@ -417,11 +431,12 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
                     <select
                       value={role}
                       disabled={Boolean(editingUser && editingUser.userId === currentUser.userId)}
-                      onChange={(e) => setRole(e.target.value as 'Employee' | 'Admin')}
+                      onChange={(e) => setRole(e.target.value as UserRole)}
                       className="w-full rounded-lg border border-[#EAD9D4] px-3 py-2 text-sm bg-white disabled:bg-[#F8F4F0] focus:outline-none focus:border-[#6B1A25]"
                     >
                       <option value="Employee">Process Owner</option>
-                      <option value="Admin">Auditor Account</option>
+                      <option value="Auditor">Auditor Account</option>
+                      {isSysAdmin && <option value="Admin">System Administrator</option>}
                     </select>
                   </div>
                 </div>

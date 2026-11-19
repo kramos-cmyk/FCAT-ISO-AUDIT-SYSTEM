@@ -7,6 +7,7 @@ import {
   evidenceLinksOf,
   fmtDateTime,
   followUpsOf,
+  isAuditorRole,
   normalizeInputDate,
   possibleRootCausesOf,
   safeUrl,
@@ -47,7 +48,7 @@ export function CarFormPage({
   onDone: () => void;
 }) {
   const { showToast } = useToast();
-  const isAuditor = user.role === 'Admin';
+  const isAuditor = isAuditorRole(user.role);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 

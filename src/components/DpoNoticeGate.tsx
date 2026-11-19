@@ -83,34 +83,40 @@ export function DpoNoticeGate({
           </div>
 
           {/* Verbatim DPO Notice Text */}
-          <div className="space-y-3.5 text-sm text-[#2B2323] leading-relaxed bg-[#FBF7F4] border border-[#EAD9D4] rounded-xl p-4 sm:p-5 max-h-[48vh] overflow-y-auto">
-            <p className="m-0">
-              By accessing and using this system, you acknowledge that the information you provide,
-              upload, modify, or maintain within this platform may be processed and retained for
-              legitimate institutional purposes, including ISO compliance, audit management, records
-              management, reporting, security, and accountability.
-            </p>
-            <p className="m-0">
-              System activities may be logged, including login attempts, access to records, data
-              submissions, modifications, uploads, and other relevant transactions, subject to
-              applicable institutional policies and data privacy regulations.
-            </p>
-            <p className="m-0">
-              Personal information collected through this system shall be processed in accordance
-              with applicable data privacy laws, institutional policies, and authorized retention and
-              security procedures.
-            </p>
-            <p className="m-0">
-              Users are responsible for ensuring that the information they enter is accurate,
-              appropriate, and authorized for submission. Unauthorized access, disclosure,
-              alteration, misuse, or extraction of information is strictly prohibited.
-            </p>
-            <p className="m-0">
-              If you have questions, concerns, or requests regarding the processing of personal data,
-              you may contact the institution&apos;s designated Data Protection Officer (DPO) through
-              the official channels.
-            </p>
-          </div>
+<div className="mx-auto w-full max-w-3xl space-y-4 text-sm text-[#2B2323] leading-7 text-justify bg-[#FBF7F4] border border-[#EAD9D4] rounded-xl p-5 sm:p-7 max-h-[48vh] overflow-y-auto">
+
+  <p className="m-0">
+    By accessing and using this system, you acknowledge that the information you provide,
+    upload, modify, or maintain within this platform may be processed and retained for
+    legitimate institutional purposes, including ISO compliance, audit management, records
+    management, reporting, security, and accountability.
+  </p>
+
+  <p className="m-0">
+    System activities may be logged, including login attempts, access to records, data
+    submissions, modifications, uploads, and other relevant transactions, subject to
+    applicable institutional policies and data privacy regulations.
+  </p>
+
+  <p className="m-0">
+    Personal information collected through this system shall be processed in accordance
+    with applicable data privacy laws, institutional policies, and authorized retention and
+    security procedures.
+  </p>
+
+  <p className="m-0">
+    Users are responsible for ensuring that the information they enter is accurate,
+    appropriate, and authorized for submission. Unauthorized access, disclosure,
+    alteration, misuse, or extraction of information is strictly prohibited.
+  </p>
+
+  <p className="m-0">
+    If you have questions, concerns, or requests regarding the processing of personal data,
+    you may contact the institution&apos;s designated Data Protection Officer (DPO) through
+    the official channels.
+  </p>
+
+</div>
 
           {/* Auto-logout Warning Banner */}
           <div className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-[#FBF0D6]/70 border border-[#E7CF86] px-3.5 py-2.5 text-xs text-[#5E4700]">

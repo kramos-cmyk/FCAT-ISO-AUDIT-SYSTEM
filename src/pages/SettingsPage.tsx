@@ -136,7 +136,7 @@ export function SettingsPage({
           page.
         </p>
         <p className="text-xs text-[#7A6F6F] mt-1 mb-0">
-          To lock/unlock accounts, an Auditor Account can do so from User Management.
+          To lock/unlock accounts, a System Administrator or Auditor Account can do so from User Management.
         </p>
       </div>
     </div>

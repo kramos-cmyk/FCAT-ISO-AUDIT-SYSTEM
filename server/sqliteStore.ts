@@ -209,25 +209,56 @@ export class SqliteStore implements DataStore {
         .run();
     }
 
-    // Seed default admin if no users exist
+    // Seed 3 starter accounts (System Administrator, Auditor Account, Process Owner) on initial setup
     const userCount = (this.db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c;
-    if (userCount === 0) {
-      this.db
-        .prepare(
-          `INSERT INTO users (UserID, Name, Email, PasswordHash, Role, Department, Position, Status, CreatedAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          newId('U'),
+    const onlyDefaultAdmin =
+      userCount === 1 &&
+      Boolean(
+        this.db.prepare("SELECT 1 FROM users WHERE LOWER(Email) = 'admin@fcat.com.ph'").get()
+      );
+    if (userCount === 0 || onlyDefaultAdmin) {
+      const insertUser = this.db.prepare(
+        `INSERT INTO users (UserID, Name, Email, PasswordHash, Role, Department, Position, Status, CreatedAt)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM users WHERE LOWER(Email) = LOWER(?))`
+      );
+      const starters: Array<[string, string, string, string, string]> = [
+        [
           'System Administrator',
           'admin@fcat.com.ph',
-          hashPassword('FCATsince1993!'),
           'Admin',
           'QA / Management Representative',
-          'Administrator',
+          'System Administrator',
+        ],
+        [
+          'ISO Auditor Account',
+          'auditor@fcat.com.ph',
+          'Auditor',
+          'Review and Improvement',
+          'Lead Auditor',
+        ],
+        [
+          'Process Owner Account',
+          'processowner@fcat.com.ph',
+          'Employee',
+          'IT Services',
+          'Department Head',
+        ],
+      ];
+      for (const [name, email, role, dept, pos] of starters) {
+        insertUser.run(
+          newId('U'),
+          name,
+          email,
+          hashPassword('FCATsince1993!'),
+          role,
+          dept,
+          pos,
           'Active',
-          nowIso()
+          nowIso(),
+          email
         );
+      }
     }
   }
 

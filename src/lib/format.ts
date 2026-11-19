@@ -1,7 +1,17 @@
 import type { CarRecord, CorrectionEntry, CorrectiveActionEntry, FollowUpEntry } from './types';
 
 export function roleLabel(role: string): string {
-  return role === 'Admin' ? 'Auditor Account' : 'Process Owner';
+  if (role === 'Admin') return 'System Administrator';
+  if (role === 'Auditor') return 'Auditor Account';
+  return 'Process Owner';
+}
+
+export function isAuditorRole(role: string | undefined): boolean {
+  return role === 'Admin' || role === 'Auditor';
+}
+
+export function isSystemAdminRole(role: string | undefined): boolean {
+  return role === 'Admin';
 }
 
 export function safeUrl(url: string | undefined | null): string {

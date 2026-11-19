@@ -8,6 +8,7 @@ import {
   fmtDate,
   fmtDateTime,
   followUpsOf,
+  isAuditorRole,
   isRecordOverdue,
   possibleRootCausesOf,
   safeUrl,
@@ -407,9 +408,9 @@ export function CarViewModal({
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-semibold text-[#2B2323]">
                             {c.UserName}
-                            {c.Role === 'Admin' && (
+                            {isAuditorRole(c.Role) && (
                               <span className="ml-2 text-[11px] font-semibold text-[#4A1219] bg-[#F3E8DE] px-2 py-0.5 rounded">
-                                Auditor
+                                {c.Role === 'Admin' ? 'System Admin' : 'Auditor'}
                               </span>
                             )}
                           </span>
@@ -423,7 +424,7 @@ export function CarViewModal({
                   </div>
                 )}
 
-                {user.role === 'Admin' && (
+                {isAuditorRole(user.role) && (
                   <div className="mt-4 pt-3 border-t border-[#EAD9D4]">
                     <textarea
                       rows={2}

@@ -9,6 +9,7 @@ import {
   saveSession,
   setUnauthorizedHandler,
 } from './lib/api';
+import { isAuditorRole } from './lib/format';
 import type { SessionUser } from './lib/types';
 import { CarViewModal } from './components/CarViewModal';
 import { DpoNoticeGate } from './components/DpoNoticeGate';
@@ -26,7 +27,8 @@ import { SettingsPage } from './pages/SettingsPage';
 import { TermsPage } from './pages/TermsPage';
 import { UsersPage } from './pages/UsersPage';
 
-const ADMIN_ONLY_PAGES: AppPage[] = ['admin', 'overview', 'users'];
+const AUDITOR_PAGES: AppPage[] = ['admin', 'overview', 'users'];
+const SYSTEM_ADMIN_ONLY_PAGES: AppPage[] = ['company'];
 
 function readInitialRoute(): { page: AppPage | 'login'; carNo?: string } {
   const params = new URLSearchParams(window.location.search);
@@ -55,8 +57,10 @@ function AppInner() {
     (page: AppPage, carNo?: string) => {
       const targetUser = getStoredUser();
       let safePage = page;
-      if (targetUser && targetUser.role !== 'Admin' && ADMIN_ONLY_PAGES.includes(page)) {
+      if (targetUser && !isAuditorRole(targetUser.role) && (AUDITOR_PAGES.includes(page) || SYSTEM_ADMIN_ONLY_PAGES.includes(page))) {
         safePage = 'employee';
+      } else if (targetUser && targetUser.role !== 'Admin' && SYSTEM_ADMIN_ONLY_PAGES.includes(page)) {
+        safePage = 'admin';
       }
       setRoute({ page: safePage, carNo });
       const url = new URL(window.location.href);
@@ -118,7 +122,7 @@ function AppInner() {
     setLogoutNotice('');
     setDpoConfirmed(false);
     setUser(loggedInUser);
-    const defaultPage: AppPage = loggedInUser.role === 'Admin' ? 'admin' : 'employee';
+    const defaultPage: AppPage = isAuditorRole(loggedInUser.role) ? 'admin' : 'employee';
     navigate(defaultPage);
   };
 
@@ -163,15 +167,18 @@ function AppInner() {
   }
 
   let activePage: AppPage =
-    route.page === 'login' ? (user.role === 'Admin' ? 'admin' : 'employee') : route.page;
-  if (user.role !== 'Admin' && ADMIN_ONLY_PAGES.includes(activePage)) {
+    route.page === 'login' ? (isAuditorRole(user.role) ? 'admin' : 'employee') : route.page;
+  if (!isAuditorRole(user.role) && (AUDITOR_PAGES.includes(activePage) || SYSTEM_ADMIN_ONLY_PAGES.includes(activePage))) {
     activePage = 'employee';
   }
-  if (user.role === 'Admin' && activePage === 'employee') {
+  if (user.role !== 'Admin' && SYSTEM_ADMIN_ONLY_PAGES.includes(activePage)) {
+    activePage = 'admin';
+  }
+  if (isAuditorRole(user.role) && activePage === 'employee') {
     activePage = 'admin';
   }
 
-  const returnHome = () => navigate(user.role === 'Admin' ? 'admin' : 'employee');
+  const returnHome = () => navigate(isAuditorRole(user.role) ? 'admin' : 'employee');
 
   return (
     <Layout

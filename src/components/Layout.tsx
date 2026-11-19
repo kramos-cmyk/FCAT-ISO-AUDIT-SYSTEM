@@ -13,7 +13,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { roleLabel } from '../lib/format';
+import { isAuditorRole, roleLabel } from '../lib/format';
 import type { SessionUser } from '../lib/types';
 import { FCATLogo } from './BrandCrest';
 
@@ -47,6 +47,8 @@ const ADMIN_NAV: NavItem[] = [
   { id: 'terms', label: 'Terms of Use', icon: FileText },
 ];
 
+const AUDITOR_NAV: NavItem[] = ADMIN_NAV.filter((item) => item.id !== 'company');
+
 const EMPLOYEE_NAV: NavItem[] = [
   { id: 'employee', label: 'My Department', icon: ClipboardList },
   { id: 'announcements', label: 'Announcements', icon: Megaphone },
@@ -71,7 +73,12 @@ export function Layout({
   children: React.ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const items = user.role === 'Admin' ? ADMIN_NAV : EMPLOYEE_NAV;
+  const items =
+    user.role === 'Admin'
+      ? ADMIN_NAV
+      : user.role === 'Auditor'
+      ? AUDITOR_NAV
+      : EMPLOYEE_NAV;
   const companyName = company.CompanyName || 'FCAT ISO Audit';
   const standard = company.Standard || 'ISO 9001:2015';
 
@@ -95,7 +102,7 @@ export function Layout({
           </button>
           <button
             type="button"
-            onClick={() => handleNavClick(user.role === 'Admin' ? 'admin' : 'employee')}
+            onClick={() => handleNavClick(isAuditorRole(user.role) ? 'admin' : 'employee')}
             className="flex items-center gap-2.5 text-left min-w-0 cursor-pointer"
           >
             <FCATLogo logoUrl={company.LogoUrl} size="sm" alt={companyName} />
