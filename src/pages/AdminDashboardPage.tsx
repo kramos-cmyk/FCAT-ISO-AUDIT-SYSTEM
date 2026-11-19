@@ -223,6 +223,20 @@ function describeAuditAction(action: string): ActionMeta {
         categoryLabel: 'Announcements & System',
         badgeClass: 'bg-[#F4ECE9] text-[#4A1219] border-[#EAD9D4]',
       };
+    case 'CREATE_HELPDESK_TICKET':
+      return {
+        label: 'Help Desk Concern Submitted',
+        category: 'submissions',
+        categoryLabel: 'Submissions & Edits',
+        badgeClass: 'bg-[#F9EAEA] text-[#6B1A25] border-[#E8C5C8]',
+      };
+    case 'HELPDESK_STATUS':
+      return {
+        label: 'Help Desk Status Changed',
+        category: 'status',
+        categoryLabel: 'Status Change',
+        badgeClass: 'bg-[#FBF0D6] text-[#6E5200] border-[#E7CF86]',
+      };
     default:
       if (code.startsWith('SHEETS_SYNC_')) {
         return {

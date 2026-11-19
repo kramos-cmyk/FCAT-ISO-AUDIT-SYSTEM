@@ -1,7 +1,9 @@
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
+import { initWebSocketServer } from './server/realtime.js';
 import { createApiRouter } from './server/routes.js';
 import { initializeDataStore } from './server/storeManager.js';
 
@@ -37,7 +39,10 @@ async function startServer() {
     });
   }
 
-  app.listen(port, '0.0.0.0', () => {
+  const server = http.createServer(app);
+  initWebSocketServer(server);
+
+  server.listen(port, '0.0.0.0', () => {
     console.log(`FCAT ISO Audit Management System listening on http://0.0.0.0:${port}`);
   });
 }

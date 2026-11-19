@@ -161,3 +161,56 @@ export interface AuditLogItem {
   UserEmail?: string;
   UserRole?: string;
 }
+
+export type HelpDeskTicketStatus = 'Open' | 'In Progress' | 'Resolved' | 'Closed';
+export type HelpDeskTicketPriority = 'Normal' | 'Urgent';
+
+export interface HelpDeskTicket {
+  TicketID: string;
+  Subject: string;
+  Category: string;
+  Priority: HelpDeskTicketPriority;
+  RelatedCARNo: string;
+  Status: HelpDeskTicketStatus;
+  CreatedBy: string;
+  CreatedByName: string;
+  CreatedByRole: string;
+  CreatedByDepartment: string;
+  AssignedTo: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+}
+
+export interface HelpDeskMessage {
+  MessageID: string;
+  TicketID: string;
+  SenderID: string;
+  SenderName: string;
+  SenderRole: string;
+  Message: string;
+  CreatedAt: string;
+}
+
+export interface DirectMessage {
+  MessageID: string;
+  FromUserID: string;
+  FromUserName: string;
+  FromUserRole: string;
+  ToUserID: string;
+  Message: string;
+  Read: boolean;
+  CreatedAt: string;
+}
+
+export interface DmThreadSummary {
+  userId: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  department: string;
+  position: string;
+  lastMessage: string;
+  lastAt: string;
+  lastFromMe: boolean;
+  unreadCount: number;
+}

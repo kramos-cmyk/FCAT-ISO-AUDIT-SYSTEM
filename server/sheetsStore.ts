@@ -10,6 +10,9 @@ import {
   DEFAULT_COMPANY_DETAILS,
   DEFAULT_DEPARTMENTS,
   DEPARTMENT_COLS,
+  DIRECT_MESSAGE_COLS,
+  HELPDESK_MESSAGE_COLS,
+  HELPDESK_TICKET_COLS,
   LOG_COLS,
   NOTIF_COLS,
   SETTINGS_COLS,
@@ -27,6 +30,9 @@ import type {
   CarComment,
   CarRecord,
   DataStore,
+  DirectMessage,
+  HelpDeskMessage,
+  HelpDeskTicket,
   NotificationRecord,
   UserRecord,
   WhyWhyFactors,
@@ -161,6 +167,9 @@ export class GoogleSheetsStore implements DataStore {
     await this.ensureTab(SHEETS.ANNOUNCEMENT_HISTORY, ANNOUNCEMENT_HISTORY_COLS);
     await this.ensureTab(SHEETS.ANNOUNCEMENT_COMMENTS, ANNOUNCEMENT_COMMENT_COLS);
     await this.ensureTab(SHEETS.DEPARTMENTS, DEPARTMENT_COLS);
+    await this.ensureTab(SHEETS.HELPDESK_TICKETS, HELPDESK_TICKET_COLS);
+    await this.ensureTab(SHEETS.HELPDESK_MESSAGES, HELPDESK_MESSAGE_COLS);
+    await this.ensureTab(SHEETS.DIRECT_MESSAGES, DIRECT_MESSAGE_COLS);
 
     const deptRows = await this.getRowsRaw(SHEETS.DEPARTMENTS);
     if (deptRows.length <= 1) {
@@ -692,6 +701,82 @@ export class GoogleSheetsStore implements DataStore {
     if (!isAdmin && target.UserID !== requesterId) return 'forbidden';
     await this.deleteRowsWhere(SHEETS.ANNOUNCEMENT_COMMENTS, ANNOUNCEMENT_COMMENT_COLS, 'CommentID', commentId);
     return 'ok';
+  }
+
+  // ---- Help Desk & Direct Messages ----
+  async listHelpDeskTickets(): Promise<HelpDeskTicket[]> {
+    const rows = await this.getObjects<HelpDeskTicket>(SHEETS.HELPDESK_TICKETS, HELPDESK_TICKET_COLS);
+    return rows
+      .map(({ _row, ...t }) => t)
+      .sort((a, b) => new Date(b.UpdatedAt || b.CreatedAt).getTime() - new Date(a.UpdatedAt || a.CreatedAt).getTime());
+  }
+
+  async getHelpDeskTicket(ticketId: string): Promise<HelpDeskTicket | null> {
+    const rows = await this.getObjects<HelpDeskTicket>(SHEETS.HELPDESK_TICKETS, HELPDESK_TICKET_COLS);
+    const match = rows.find((t) => t.TicketID === ticketId);
+    if (!match) return null;
+    const { _row, ...ticket } = match;
+    return ticket;
+  }
+
+  async createHelpDeskTicket(ticket: HelpDeskTicket, initialMessage: HelpDeskMessage): Promise<void> {
+    await this.appendRow(SHEETS.HELPDESK_TICKETS, HELPDESK_TICKET_COLS, ticket as unknown as Record<string, unknown>);
+    await this.appendRow(SHEETS.HELPDESK_MESSAGES, HELPDESK_MESSAGE_COLS, initialMessage as unknown as Record<string, unknown>);
+  }
+
+  async updateHelpDeskTicket(ticketId: string, updates: Partial<HelpDeskTicket>): Promise<boolean> {
+    return this.updateRowByField(
+      SHEETS.HELPDESK_TICKETS,
+      HELPDESK_TICKET_COLS,
+      'TicketID',
+      ticketId,
+      updates as Record<string, unknown>
+    );
+  }
+
+  async listHelpDeskMessages(ticketId: string): Promise<HelpDeskMessage[]> {
+    const rows = await this.getObjects<HelpDeskMessage>(SHEETS.HELPDESK_MESSAGES, HELPDESK_MESSAGE_COLS);
+    return rows
+      .filter((m) => m.TicketID === ticketId)
+      .map(({ _row, ...m }) => m)
+      .sort((a, b) => new Date(a.CreatedAt).getTime() - new Date(b.CreatedAt).getTime());
+  }
+
+  async addHelpDeskMessage(message: HelpDeskMessage): Promise<void> {
+    await this.appendRow(SHEETS.HELPDESK_MESSAGES, HELPDESK_MESSAGE_COLS, message as unknown as Record<string, unknown>);
+  }
+
+  async listDirectMessagesForUser(userId: string): Promise<DirectMessage[]> {
+    const rows = await this.getObjects<DirectMessage>(SHEETS.DIRECT_MESSAGES, DIRECT_MESSAGE_COLS);
+    return rows
+      .filter((m) => m.FromUserID === userId || m.ToUserID === userId)
+      .map(({ _row, ...m }) => ({
+        ...m,
+        Read: m.Read === true || String(m.Read).toUpperCase() === 'TRUE' || String(m.Read) === '1',
+      }))
+      .sort((a, b) => new Date(a.CreatedAt).getTime() - new Date(b.CreatedAt).getTime());
+  }
+
+  async createDirectMessage(message: DirectMessage): Promise<void> {
+    await this.appendRow(SHEETS.DIRECT_MESSAGES, DIRECT_MESSAGE_COLS, {
+      ...message,
+      Read: message.Read ? 'TRUE' : 'FALSE',
+    });
+  }
+
+  async markDirectMessagesRead(fromUserId: string, toUserId: string): Promise<void> {
+    const rows = await this.getObjects<DirectMessage>(SHEETS.DIRECT_MESSAGES, DIRECT_MESSAGE_COLS);
+    const unread = rows.filter(
+      (m) =>
+        m.FromUserID === fromUserId &&
+        m.ToUserID === toUserId &&
+        !(m.Read === true || String(m.Read).toUpperCase() === 'TRUE' || String(m.Read) === '1')
+    );
+    for (const m of unread) {
+      await this.updateRowByField(SHEETS.DIRECT_MESSAGES, DIRECT_MESSAGE_COLS, 'MessageID', m.MessageID, {
+        Read: 'TRUE',
+      });
+    }
   }
 
   // ---- Audit Log ----

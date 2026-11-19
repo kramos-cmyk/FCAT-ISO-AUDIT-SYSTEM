@@ -14,6 +14,9 @@ export const SHEETS = {
   ANNOUNCEMENT_HISTORY: 'Announcement_History',
   ANNOUNCEMENT_COMMENTS: 'Announcement_Comments',
   DEPARTMENTS: 'Departments',
+  HELPDESK_TICKETS: 'HelpDesk_Tickets',
+  HELPDESK_MESSAGES: 'HelpDesk_Messages',
+  DIRECT_MESSAGES: 'Direct_Messages',
 } as const;
 
 export const DEFAULT_DEPARTMENTS: string[] = [
@@ -49,6 +52,17 @@ export const COMMENT_COLS = ['CommentID', 'CARNo', 'UserID', 'UserName', 'Role',
 export const ANNOUNCEMENT_COLS = ['AnnouncementID', 'Title', 'Message', 'PostedBy', 'PostedByName', 'CreatedAt', 'UpdatedAt', 'ImageLinks'];
 export const ANNOUNCEMENT_HISTORY_COLS = ['HistoryID', 'AnnouncementID', 'Title', 'Message', 'ImageLinks', 'EditedBy', 'EditedByName', 'EditedAt'];
 export const ANNOUNCEMENT_COMMENT_COLS = ['CommentID', 'AnnouncementID', 'UserID', 'UserName', 'Role', 'Message', 'CreatedAt'];
+export const HELPDESK_TICKET_COLS = [
+  'TicketID', 'Subject', 'Category', 'Priority', 'RelatedCARNo', 'Status',
+  'CreatedBy', 'CreatedByName', 'CreatedByRole', 'CreatedByDepartment',
+  'AssignedTo', 'CreatedAt', 'UpdatedAt',
+];
+export const HELPDESK_MESSAGE_COLS = [
+  'MessageID', 'TicketID', 'SenderID', 'SenderName', 'SenderRole', 'Message', 'CreatedAt',
+];
+export const DIRECT_MESSAGE_COLS = [
+  'MessageID', 'FromUserID', 'FromUserName', 'FromUserRole', 'ToUserID', 'Message', 'Read', 'CreatedAt',
+];
 
 export const REQUIRED_FIELDS = ['Type', 'Department', 'DateIssued', 'Source'];
 

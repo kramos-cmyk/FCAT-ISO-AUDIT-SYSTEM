@@ -10,6 +10,7 @@ import {
   setUnauthorizedHandler,
 } from './lib/api';
 import { isAuditorRole } from './lib/format';
+import { disconnectRealtime } from './lib/realtime';
 import type { SessionUser } from './lib/types';
 import { CarViewModal } from './components/CarViewModal';
 import { DpoNoticeGate } from './components/DpoNoticeGate';
@@ -20,6 +21,7 @@ import { AnnouncementsPage } from './pages/AnnouncementsPage';
 import { CarFormPage } from './pages/CarFormPage';
 import { CompanyDetailsPage } from './pages/CompanyDetailsPage';
 import { EmployeeDashboardPage } from './pages/EmployeeDashboardPage';
+import { HelpDeskPage, type HelpDeskTarget } from './pages/HelpDeskPage';
 import { LoginPage } from './pages/LoginPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { ProfilePage } from './pages/ProfilePage';
@@ -52,6 +54,7 @@ function AppInner() {
     readInitialRoute()
   );
   const [viewCarNo, setViewCarNo] = useState<string | null>(null);
+  const [helpDeskTarget, setHelpDeskTarget] = useState<HelpDeskTarget | null>(null);
 
   const navigate = useCallback(
     (page: AppPage, carNo?: string) => {
@@ -128,10 +131,12 @@ function AppInner() {
 
   const handleLogout = useCallback((reason?: string) => {
     api.logout().catch(() => {});
+    disconnectRealtime();
     clearSession();
     setUser(null);
     setDpoConfirmed(false);
     setViewCarNo(null);
+    setHelpDeskTarget(null);
     setLogoutNotice(typeof reason === 'string' ? reason : '');
     const url = new URL(window.location.href);
     url.searchParams.delete('page');
@@ -180,12 +185,22 @@ function AppInner() {
 
   const returnHome = () => navigate(isAuditorRole(user.role) ? 'admin' : 'employee');
 
+  const openHelpDesk = useCallback(
+    (tab: 'tickets' | 'dm', id?: string) => {
+      setHelpDeskTarget({ tab, id });
+      navigate('helpdesk');
+    },
+    [navigate]
+  );
+
   return (
     <Layout
       user={user}
       activePage={activePage}
       company={company}
       onNavigate={navigate}
+      onViewCar={(c) => setViewCarNo(c)}
+      onOpenHelpDesk={openHelpDesk}
       onLogout={() => handleLogout()}
     >
       {activePage === 'admin' && (
@@ -213,6 +228,13 @@ function AppInner() {
         />
       )}
       {activePage === 'announcements' && <AnnouncementsPage user={user} />}
+      {activePage === 'helpdesk' && (
+        <HelpDeskPage
+          user={user}
+          target={helpDeskTarget}
+          onViewCar={(c) => setViewCarNo(c)}
+        />
+      )}
       {activePage === 'company' && (
         <CompanyDetailsPage user={user} onCompanyUpdated={() => loadCompany(false)} />
       )}

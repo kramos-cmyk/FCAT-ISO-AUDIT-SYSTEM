@@ -133,6 +133,46 @@ export interface AuditLogEntry {
   Details: string;
 }
 
+export type HelpDeskTicketStatus = 'Open' | 'In Progress' | 'Resolved' | 'Closed';
+export type HelpDeskTicketPriority = 'Normal' | 'Urgent';
+
+export interface HelpDeskTicket {
+  TicketID: string;
+  Subject: string;
+  Category: string;
+  Priority: HelpDeskTicketPriority;
+  RelatedCARNo: string;
+  Status: HelpDeskTicketStatus;
+  CreatedBy: string;
+  CreatedByName: string;
+  CreatedByRole: string;
+  CreatedByDepartment: string;
+  AssignedTo: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+}
+
+export interface HelpDeskMessage {
+  MessageID: string;
+  TicketID: string;
+  SenderID: string;
+  SenderName: string;
+  SenderRole: string;
+  Message: string;
+  CreatedAt: string;
+}
+
+export interface DirectMessage {
+  MessageID: string;
+  FromUserID: string;
+  FromUserName: string;
+  FromUserRole: string;
+  ToUserID: string;
+  Message: string;
+  Read: boolean | string;
+  CreatedAt: string;
+}
+
 export interface DataStore {
   readonly mode: 'sqlite' | 'sheets';
   init(): Promise<void>;
@@ -182,6 +222,17 @@ export interface DataStore {
   listAnnouncementComments(announcementId: string): Promise<AnnouncementComment[]>;
   addAnnouncementComment(comment: AnnouncementComment): Promise<void>;
   deleteAnnouncementComment(commentId: string, requesterId: string, isAdmin: boolean): Promise<'ok' | 'not_found' | 'forbidden'>;
+
+  // Help Desk & Direct Messages
+  listHelpDeskTickets(): Promise<HelpDeskTicket[]>;
+  getHelpDeskTicket(ticketId: string): Promise<HelpDeskTicket | null>;
+  createHelpDeskTicket(ticket: HelpDeskTicket, initialMessage: HelpDeskMessage): Promise<void>;
+  updateHelpDeskTicket(ticketId: string, updates: Partial<HelpDeskTicket>): Promise<boolean>;
+  listHelpDeskMessages(ticketId: string): Promise<HelpDeskMessage[]>;
+  addHelpDeskMessage(message: HelpDeskMessage): Promise<void>;
+  listDirectMessagesForUser(userId: string): Promise<DirectMessage[]>;
+  createDirectMessage(message: DirectMessage): Promise<void>;
+  markDirectMessagesRead(fromUserId: string, toUserId: string): Promise<void>;
 
   // Audit log
   appendLog(entry: AuditLogEntry): Promise<void>;

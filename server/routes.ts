@@ -9,6 +9,7 @@ import {
   REQUIRED_FIELDS,
 } from './constants.js';
 import { generateCarPdfBuffer } from './pdfExport.js';
+import { emitToUsers } from './realtime.js';
 import {
   hashPassword,
   isAuditorOrAdmin,
@@ -33,7 +34,16 @@ import {
   syncDataBetweenStores,
   testGoogleSheetConnection,
 } from './storeManager.js';
-import type { CarRecord, SessionUser } from './types.js';
+import type {
+  CarRecord,
+  DirectMessage,
+  HelpDeskMessage,
+  HelpDeskTicket,
+  HelpDeskTicketPriority,
+  HelpDeskTicketStatus,
+  NotificationRecord,
+  SessionUser,
+} from './types.js';
 
 interface AuthedRequest extends Request {
   user?: SessionUser;
@@ -124,6 +134,11 @@ async function resolveAssignee(employeeId: unknown): Promise<{
   return { ok: true, EmployeeID: user.UserID, EmployeeName: user.Name };
 }
 
+async function createAndPushNotification(notif: NotificationRecord) {
+  await getStore().createNotification(notif);
+  emitToUsers([notif.ToUserID], { type: 'notification:new', payload: notif });
+}
+
 async function notifyDepartment(fromUserId: string, department: string, message: string, carNo: string) {
   if (!department) return;
   const store = getStore();
@@ -132,7 +147,7 @@ async function notifyDepartment(fromUserId: string, department: string, message:
     (u) => u.Role === 'Employee' && u.Status === 'Active' && userHasDepartment(u.Department, department)
   );
   for (const u of targets) {
-    await store.createNotification({
+    await createAndPushNotification({
       NotificationID: newId('N'),
       ToUserID: u.UserID,
       FromUserID: fromUserId,
@@ -664,7 +679,7 @@ export function createApiRouter(): express.Router {
 
       const raiseMessage = `A new ${record.Type || 'finding'} (${carNo}) has been raised for your department: ${(record.Details || '').slice(0, 120)}`;
       if (record.EmployeeID) {
-        await store.createNotification({
+        await createAndPushNotification({
           NotificationID: newId('N'),
           ToUserID: record.EmployeeID,
           FromUserID: req.user!.userId,
@@ -790,7 +805,7 @@ export function createApiRouter(): express.Router {
       await store.updateCAR(carNo, { AdminFlag: 'Needs Attention', AdminNote: note, UpdatedAt: nowIso() });
       const msg = `Your record ${carNo} needs attention: ${note}`;
       if (rec.EmployeeID) {
-        await store.createNotification({
+        await createAndPushNotification({
           NotificationID: newId('N'),
           ToUserID: rec.EmployeeID,
           FromUserID: req.user!.userId,
@@ -853,7 +868,7 @@ export function createApiRouter(): express.Router {
       if (deadline) {
         const msg = `A deadline of ${deadline} has been set for your record ${carNo}.`;
         if (rec.EmployeeID) {
-          await store.createNotification({
+          await createAndPushNotification({
             NotificationID: newId('N'),
             ToUserID: rec.EmployeeID,
             FromUserID: req.user!.userId,
@@ -1412,6 +1427,362 @@ export function createApiRouter(): express.Router {
       res.json(enriched);
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load logs.' });
+    }
+  });
+
+  // ---- HELP DESK & DIRECT MESSAGES ----
+  router.get('/helpdesk/contacts', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const users = await getStore().listUsers();
+      const contacts = users
+        .filter((u) => u.Status === 'Active' && u.UserID !== req.user!.userId)
+        .map((u) => ({
+          userId: u.UserID,
+          name: u.Name,
+          email: u.Email,
+          role: normalizeUserRole(u.Role),
+          department: u.Department,
+          position: u.Position,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      res.json(contacts);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load contacts.' });
+    }
+  });
+
+  router.get('/helpdesk/tickets', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const all = await getStore().listHelpDeskTickets();
+      const filtered = isAuditorOrAdmin(req.user!.role)
+        ? all
+        : all.filter((t) => t.CreatedBy === req.user!.userId);
+      res.json(filtered);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load concerns.' });
+    }
+  });
+
+  router.post('/helpdesk/tickets', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const subject = String(req.body?.subject || '').trim().slice(0, 180);
+      const category = String(req.body?.category || 'General Concern').trim().slice(0, 80) || 'General Concern';
+      const priority: HelpDeskTicketPriority = req.body?.priority === 'Urgent' ? 'Urgent' : 'Normal';
+      const relatedCarNo = String(req.body?.relatedCarNo || '').trim().slice(0, 60);
+      const messageText = String(req.body?.message || '').trim().slice(0, 4000);
+      if (!subject || !messageText) {
+        res.json({ ok: false, error: 'Subject and concern description are required.' });
+        return;
+      }
+      const store = getStore();
+      const now = nowIso();
+      const ticketId = `HD-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+      const ticket: HelpDeskTicket = {
+        TicketID: ticketId,
+        Subject: subject,
+        Category: category,
+        Priority: priority,
+        RelatedCARNo: relatedCarNo,
+        Status: 'Open',
+        CreatedBy: req.user!.userId,
+        CreatedByName: req.user!.name,
+        CreatedByRole: req.user!.role,
+        CreatedByDepartment: req.user!.department || '',
+        AssignedTo: '',
+        CreatedAt: now,
+        UpdatedAt: now,
+      };
+      const initialMsg: HelpDeskMessage = {
+        MessageID: newId('HM'),
+        TicketID: ticketId,
+        SenderID: req.user!.userId,
+        SenderName: req.user!.name,
+        SenderRole: req.user!.role,
+        Message: messageText,
+        CreatedAt: now,
+      };
+      await store.createHelpDeskTicket(ticket, initialMsg);
+      await store.appendLog({
+        Timestamp: now,
+        UserID: req.user!.userId,
+        Action: 'CREATE_HELPDESK_TICKET',
+        Details: `${ticketId}: ${subject}`,
+      });
+
+      const users = await store.listUsers();
+      const staffIds = users
+        .filter((u) => u.Status === 'Active' && isAuditorOrAdmin(normalizeUserRole(u.Role)) && u.UserID !== req.user!.userId)
+        .map((u) => u.UserID);
+
+      emitToUsers([req.user!.userId, ...staffIds], { type: 'helpdesk:ticket_created', payload: ticket });
+
+      for (const uid of staffIds) {
+        await createAndPushNotification({
+          NotificationID: newId('N'),
+          ToUserID: uid,
+          FromUserID: req.user!.userId,
+          Message: `New Help Desk ${priority === 'Urgent' ? '[Urgent] ' : ''}concern (${ticketId}) from ${req.user!.name}: ${subject}`,
+          RelatedCARNo: `HELP:${ticketId}`,
+          Read: false,
+          CreatedAt: now,
+        });
+      }
+
+      res.json({ ok: true, ticket, initialMessage: initialMsg });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to submit concern.' });
+    }
+  });
+
+  router.get('/helpdesk/tickets/:ticketId/messages', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const store = getStore();
+      const ticket = await store.getHelpDeskTicket(req.params.ticketId);
+      if (!ticket) {
+        res.status(404).json({ ok: false, error: 'Concern ticket not found.' });
+        return;
+      }
+      if (!isAuditorOrAdmin(req.user!.role) && ticket.CreatedBy !== req.user!.userId) {
+        res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
+        return;
+      }
+      res.json(await store.listHelpDeskMessages(ticket.TicketID));
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load messages.' });
+    }
+  });
+
+  router.post('/helpdesk/tickets/:ticketId/messages', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const text = String(req.body?.message || '').trim().slice(0, 4000);
+      if (!text) {
+        res.json({ ok: false, error: 'Message cannot be empty.' });
+        return;
+      }
+      const store = getStore();
+      const ticket = await store.getHelpDeskTicket(req.params.ticketId);
+      if (!ticket) {
+        res.status(404).json({ ok: false, error: 'Concern ticket not found.' });
+        return;
+      }
+      if (!isAuditorOrAdmin(req.user!.role) && ticket.CreatedBy !== req.user!.userId) {
+        res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
+        return;
+      }
+      const now = nowIso();
+      const msg: HelpDeskMessage = {
+        MessageID: newId('HM'),
+        TicketID: ticket.TicketID,
+        SenderID: req.user!.userId,
+        SenderName: req.user!.name,
+        SenderRole: req.user!.role,
+        Message: text,
+        CreatedAt: now,
+      };
+      await store.addHelpDeskMessage(msg);
+      const nextStatus: HelpDeskTicketStatus =
+        isAuditorOrAdmin(req.user!.role) && ticket.Status === 'Open' ? 'In Progress' : ticket.Status;
+      await store.updateHelpDeskTicket(ticket.TicketID, { Status: nextStatus, UpdatedAt: now });
+
+      const updatedTicket: HelpDeskTicket = { ...ticket, Status: nextStatus, UpdatedAt: now };
+
+      const users = await store.listUsers();
+      const staffIds = users
+        .filter((u) => u.Status === 'Active' && isAuditorOrAdmin(normalizeUserRole(u.Role)))
+        .map((u) => u.UserID);
+      const recipients = Array.from(new Set([ticket.CreatedBy, ...staffIds])).filter((id) => id !== req.user!.userId);
+
+      emitToUsers([req.user!.userId, ...recipients], { type: 'helpdesk:message', payload: msg });
+      emitToUsers([req.user!.userId, ...recipients], { type: 'helpdesk:ticket_updated', payload: updatedTicket });
+
+      if (ticket.CreatedBy !== req.user!.userId) {
+        await createAndPushNotification({
+          NotificationID: newId('N'),
+          ToUserID: ticket.CreatedBy,
+          FromUserID: req.user!.userId,
+          Message: `${req.user!.name} replied to your Help Desk concern (${ticket.TicketID}): ${text.slice(0, 90)}`,
+          RelatedCARNo: `HELP:${ticket.TicketID}`,
+          Read: false,
+          CreatedAt: now,
+        });
+      } else {
+        for (const uid of staffIds) {
+          if (uid === req.user!.userId) continue;
+          await createAndPushNotification({
+            NotificationID: newId('N'),
+            ToUserID: uid,
+            FromUserID: req.user!.userId,
+            Message: `New reply from ${req.user!.name} on Help Desk ${ticket.TicketID}: ${text.slice(0, 90)}`,
+            RelatedCARNo: `HELP:${ticket.TicketID}`,
+            Read: false,
+            CreatedAt: now,
+          });
+        }
+      }
+
+      res.json({ ok: true, message: msg, ticket: updatedTicket });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to send reply.' });
+    }
+  });
+
+  router.patch('/helpdesk/tickets/:ticketId/status', requireAuditor, async (req: AuthedRequest, res) => {
+    try {
+      const allowed: HelpDeskTicketStatus[] = ['Open', 'In Progress', 'Resolved', 'Closed'];
+      const status = String(req.body?.status || '') as HelpDeskTicketStatus;
+      if (!allowed.includes(status)) {
+        res.json({ ok: false, error: 'Invalid ticket status.' });
+        return;
+      }
+      const store = getStore();
+      const ticket = await store.getHelpDeskTicket(req.params.ticketId);
+      if (!ticket) {
+        res.status(404).json({ ok: false, error: 'Concern ticket not found.' });
+        return;
+      }
+      const now = nowIso();
+      await store.updateHelpDeskTicket(ticket.TicketID, { Status: status, UpdatedAt: now });
+      const updatedTicket: HelpDeskTicket = { ...ticket, Status: status, UpdatedAt: now };
+
+      await store.appendLog({
+        Timestamp: now,
+        UserID: req.user!.userId,
+        Action: 'HELPDESK_STATUS',
+        Details: `${ticket.TicketID} -> ${status}`,
+      });
+
+      const users = await store.listUsers();
+      const staffIds = users
+        .filter((u) => u.Status === 'Active' && isAuditorOrAdmin(normalizeUserRole(u.Role)))
+        .map((u) => u.UserID);
+      emitToUsers(Array.from(new Set([ticket.CreatedBy, ...staffIds])), {
+        type: 'helpdesk:ticket_updated',
+        payload: updatedTicket,
+      });
+
+      if (ticket.CreatedBy !== req.user!.userId) {
+        await createAndPushNotification({
+          NotificationID: newId('N'),
+          ToUserID: ticket.CreatedBy,
+          FromUserID: req.user!.userId,
+          Message: `Your Help Desk concern (${ticket.TicketID}) was marked as ${status}.`,
+          RelatedCARNo: `HELP:${ticket.TicketID}`,
+          Read: false,
+          CreatedAt: now,
+        });
+      }
+
+      res.json({ ok: true, ticket: updatedTicket });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to update ticket.' });
+    }
+  });
+
+  router.get('/helpdesk/dm/threads', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const store = getStore();
+      const me = req.user!.userId;
+      const [users, allDms] = await Promise.all([store.listUsers(), store.listDirectMessagesForUser(me)]);
+      const contacts = users.filter((u) => u.Status === 'Active' && u.UserID !== me);
+
+      const summaries = contacts.map((u) => {
+        const convo = allDms.filter(
+          (m) => (m.FromUserID === me && m.ToUserID === u.UserID) || (m.FromUserID === u.UserID && m.ToUserID === me)
+        );
+        const last = convo[convo.length - 1];
+        const unreadCount = convo.filter((m) => m.FromUserID === u.UserID && m.ToUserID === me && !m.Read).length;
+        return {
+          userId: u.UserID,
+          name: u.Name,
+          email: u.Email,
+          role: normalizeUserRole(u.Role),
+          department: u.Department,
+          position: u.Position,
+          lastMessage: last ? last.Message : '',
+          lastAt: last ? last.CreatedAt : '',
+          lastFromMe: last ? last.FromUserID === me : false,
+          unreadCount,
+        };
+      });
+
+      summaries.sort((a, b) => {
+        if (a.unreadCount !== b.unreadCount) return b.unreadCount - a.unreadCount;
+        if (a.lastAt && b.lastAt) return new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime();
+        if (a.lastAt) return -1;
+        if (b.lastAt) return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      res.json(summaries);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load chat threads.' });
+    }
+  });
+
+  router.get('/helpdesk/dm/:otherUserId', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const store = getStore();
+      const me = req.user!.userId;
+      const other = req.params.otherUserId;
+      await store.markDirectMessagesRead(other, me);
+      const all = await store.listDirectMessagesForUser(me);
+      const thread = all.filter(
+        (m) => (m.FromUserID === me && m.ToUserID === other) || (m.FromUserID === other && m.ToUserID === me)
+      );
+      emitToUsers([me], { type: 'dm:read', payload: { otherUserId: other } });
+      res.json(thread);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load messages.' });
+    }
+  });
+
+  router.post('/helpdesk/dm/:otherUserId', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const text = String(req.body?.message || '').trim().slice(0, 4000);
+      if (!text) {
+        res.json({ ok: false, error: 'Message cannot be empty.' });
+        return;
+      }
+      const store = getStore();
+      const me = req.user!;
+      const otherId = req.params.otherUserId;
+      if (otherId === me.userId) {
+        res.json({ ok: false, error: 'You cannot send a direct message to yourself.' });
+        return;
+      }
+      const recipient = await store.findUserById(otherId);
+      if (!recipient || recipient.Status !== 'Active') {
+        res.status(404).json({ ok: false, error: 'Recipient user not found or inactive.' });
+        return;
+      }
+
+      const now = nowIso();
+      const msg: DirectMessage = {
+        MessageID: newId('DM'),
+        FromUserID: me.userId,
+        FromUserName: me.name,
+        FromUserRole: me.role,
+        ToUserID: otherId,
+        Message: text,
+        Read: false,
+        CreatedAt: now,
+      };
+      await store.createDirectMessage(msg);
+      emitToUsers([me.userId, otherId], { type: 'dm:new', payload: msg });
+
+      await createAndPushNotification({
+        NotificationID: newId('N'),
+        ToUserID: otherId,
+        FromUserID: me.userId,
+        Message: `Direct message from ${me.name}: ${text.slice(0, 90)}`,
+        RelatedCARNo: `DM:${me.userId}`,
+        Read: false,
+        CreatedAt: now,
+      });
+
+      res.json({ ok: true, message: msg });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to send message.' });
     }
   });
 

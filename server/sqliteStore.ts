@@ -16,6 +16,9 @@ import type {
   CarComment,
   CarRecord,
   DataStore,
+  DirectMessage,
+  HelpDeskMessage,
+  HelpDeskTicket,
   NotificationRecord,
   UserRecord,
   WhyWhyFactors,
@@ -183,6 +186,45 @@ export class SqliteStore implements DataStore {
         Message TEXT NOT NULL,
         CreatedAt TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS helpdesk_tickets (
+        TicketID TEXT PRIMARY KEY,
+        Subject TEXT NOT NULL,
+        Category TEXT NOT NULL DEFAULT 'General Concern',
+        Priority TEXT NOT NULL DEFAULT 'Normal',
+        RelatedCARNo TEXT DEFAULT '',
+        Status TEXT NOT NULL DEFAULT 'Open',
+        CreatedBy TEXT NOT NULL,
+        CreatedByName TEXT NOT NULL,
+        CreatedByRole TEXT NOT NULL,
+        CreatedByDepartment TEXT DEFAULT '',
+        AssignedTo TEXT DEFAULT '',
+        CreatedAt TEXT NOT NULL,
+        UpdatedAt TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS helpdesk_messages (
+        MessageID TEXT PRIMARY KEY,
+        TicketID TEXT NOT NULL,
+        SenderID TEXT NOT NULL,
+        SenderName TEXT NOT NULL,
+        SenderRole TEXT NOT NULL,
+        Message TEXT NOT NULL,
+        CreatedAt TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_helpdesk_msg_ticket ON helpdesk_messages(TicketID, CreatedAt);
+
+      CREATE TABLE IF NOT EXISTS direct_messages (
+        MessageID TEXT PRIMARY KEY,
+        FromUserID TEXT NOT NULL,
+        FromUserName TEXT NOT NULL,
+        FromUserRole TEXT NOT NULL,
+        ToUserID TEXT NOT NULL,
+        Message TEXT NOT NULL,
+        Read INTEGER NOT NULL DEFAULT 0,
+        CreatedAt TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_dm_pair ON direct_messages(FromUserID, ToUserID, CreatedAt);
     `);
 
     // Seed default departments if empty
@@ -621,6 +663,91 @@ export class SqliteStore implements DataStore {
     if (!isAdmin && existing.UserID !== requesterId) return 'forbidden';
     this.db.prepare('DELETE FROM announcement_comments WHERE CommentID = ?').run(commentId);
     return 'ok';
+  }
+
+  // ---- Help Desk & Direct Messages ----
+  async listHelpDeskTickets(): Promise<HelpDeskTicket[]> {
+    return this.db
+      .prepare('SELECT * FROM helpdesk_tickets ORDER BY UpdatedAt DESC, CreatedAt DESC')
+      .all() as HelpDeskTicket[];
+  }
+
+  async getHelpDeskTicket(ticketId: string): Promise<HelpDeskTicket | null> {
+    return (
+      (this.db.prepare('SELECT * FROM helpdesk_tickets WHERE TicketID = ?').get(ticketId) as
+        | HelpDeskTicket
+        | undefined) || null
+    );
+  }
+
+  async createHelpDeskTicket(ticket: HelpDeskTicket, initialMessage: HelpDeskMessage): Promise<void> {
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO helpdesk_tickets (
+            TicketID, Subject, Category, Priority, RelatedCARNo, Status,
+            CreatedBy, CreatedByName, CreatedByRole, CreatedByDepartment, AssignedTo, CreatedAt, UpdatedAt
+          ) VALUES (
+            @TicketID, @Subject, @Category, @Priority, @RelatedCARNo, @Status,
+            @CreatedBy, @CreatedByName, @CreatedByRole, @CreatedByDepartment, @AssignedTo, @CreatedAt, @UpdatedAt
+          )`
+        )
+        .run(ticket);
+      this.db
+        .prepare(
+          `INSERT INTO helpdesk_messages (MessageID, TicketID, SenderID, SenderName, SenderRole, Message, CreatedAt)
+           VALUES (@MessageID, @TicketID, @SenderID, @SenderName, @SenderRole, @Message, @CreatedAt)`
+        )
+        .run(initialMessage);
+    });
+    tx();
+  }
+
+  async updateHelpDeskTicket(ticketId: string, updates: Partial<HelpDeskTicket>): Promise<boolean> {
+    const allowed = ['Subject', 'Category', 'Priority', 'RelatedCARNo', 'Status', 'AssignedTo', 'UpdatedAt'] as const;
+    const entries = Object.entries(updates).filter(([k]) => (allowed as readonly string[]).includes(k));
+    if (entries.length === 0) return false;
+    const setSql = entries.map(([k]) => `${k} = ?`).join(', ');
+    const vals = entries.map(([, v]) => (v === undefined ? '' : String(v)));
+    const info = this.db.prepare(`UPDATE helpdesk_tickets SET ${setSql} WHERE TicketID = ?`).run(...vals, ticketId);
+    return info.changes > 0;
+  }
+
+  async listHelpDeskMessages(ticketId: string): Promise<HelpDeskMessage[]> {
+    return this.db
+      .prepare('SELECT * FROM helpdesk_messages WHERE TicketID = ? ORDER BY CreatedAt ASC')
+      .all(ticketId) as HelpDeskMessage[];
+  }
+
+  async addHelpDeskMessage(message: HelpDeskMessage): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO helpdesk_messages (MessageID, TicketID, SenderID, SenderName, SenderRole, Message, CreatedAt)
+         VALUES (@MessageID, @TicketID, @SenderID, @SenderName, @SenderRole, @Message, @CreatedAt)`
+      )
+      .run(message);
+  }
+
+  async listDirectMessagesForUser(userId: string): Promise<DirectMessage[]> {
+    const rows = this.db
+      .prepare('SELECT * FROM direct_messages WHERE FromUserID = ? OR ToUserID = ? ORDER BY CreatedAt ASC')
+      .all(userId, userId) as Array<Omit<DirectMessage, 'Read'> & { Read: number }>;
+    return rows.map((r) => ({ ...r, Read: r.Read === 1 }));
+  }
+
+  async createDirectMessage(message: DirectMessage): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO direct_messages (MessageID, FromUserID, FromUserName, FromUserRole, ToUserID, Message, Read, CreatedAt)
+         VALUES (@MessageID, @FromUserID, @FromUserName, @FromUserRole, @ToUserID, @Message, @Read, @CreatedAt)`
+      )
+      .run({ ...message, Read: message.Read ? 1 : 0 });
+  }
+
+  async markDirectMessagesRead(fromUserId: string, toUserId: string): Promise<void> {
+    this.db
+      .prepare('UPDATE direct_messages SET Read = 1 WHERE FromUserID = ? AND ToUserID = ? AND Read = 0')
+      .run(fromUserId, toUserId);
   }
 
   // ---- Audit Log ----

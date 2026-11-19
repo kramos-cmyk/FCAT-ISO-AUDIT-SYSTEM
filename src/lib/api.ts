@@ -5,6 +5,12 @@ import type {
   AuditLogItem,
   CarComment,
   CarRecord,
+  DirectMessage,
+  DmThreadSummary,
+  HelpDeskMessage,
+  HelpDeskTicket,
+  HelpDeskTicketPriority,
+  HelpDeskTicketStatus,
   ManagedUser,
   NotificationItem,
   ProcessOwnerOption,
@@ -350,4 +356,50 @@ export const api = {
     }),
   getAuditLogs: (limit = 200) =>
     request<AuditLogItem[]>(`/admin/audit-logs?limit=${encodeURIComponent(String(limit))}`),
+
+  // Help Desk & Direct Messages
+  listHelpDeskTickets: () => request<HelpDeskTicket[]>('/helpdesk/tickets'),
+  createHelpDeskTicket: (data: {
+    subject: string;
+    category: string;
+    priority: HelpDeskTicketPriority;
+    relatedCarNo?: string;
+    message: string;
+  }) =>
+    request<{ ok: boolean; ticket?: HelpDeskTicket; initialMessage?: HelpDeskMessage; error?: string }>(
+      '/helpdesk/tickets',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    ),
+  listHelpDeskMessages: (ticketId: string) =>
+    request<HelpDeskMessage[]>(`/helpdesk/tickets/${encodeURIComponent(ticketId)}/messages`),
+  addHelpDeskMessage: (ticketId: string, message: string) =>
+    request<{ ok: boolean; message?: HelpDeskMessage; ticket?: HelpDeskTicket; error?: string }>(
+      `/helpdesk/tickets/${encodeURIComponent(ticketId)}/messages`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      }
+    ),
+  updateHelpDeskStatus: (ticketId: string, status: HelpDeskTicketStatus) =>
+    request<{ ok: boolean; ticket?: HelpDeskTicket; error?: string }>(
+      `/helpdesk/tickets/${encodeURIComponent(ticketId)}/status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }
+    ),
+  listDmThreads: () => request<DmThreadSummary[]>('/helpdesk/dm/threads'),
+  getDmThread: (otherUserId: string) =>
+    request<DirectMessage[]>(`/helpdesk/dm/${encodeURIComponent(otherUserId)}`),
+  sendDirectMessage: (otherUserId: string, message: string) =>
+    request<{ ok: boolean; message?: DirectMessage; error?: string }>(
+      `/helpdesk/dm/${encodeURIComponent(otherUserId)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      }
+    ),
 };

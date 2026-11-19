@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3,
+  Bell,
   Building2,
+  CheckCheck,
   ClipboardList,
   FilePlus2,
   FileText,
+  LifeBuoy,
   LogOut,
   Megaphone,
   Menu,
@@ -13,8 +16,10 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { isAuditorRole, roleLabel } from '../lib/format';
-import type { SessionUser } from '../lib/types';
+import { api } from '../lib/api';
+import { fmtDateTime, isAuditorRole, roleLabel } from '../lib/format';
+import { useRealtimeSubscription, type RealtimeMessage } from '../lib/realtime';
+import type { NotificationItem, SessionUser } from '../lib/types';
 import { FCATLogo } from './BrandCrest';
 
 export type AppPage =
@@ -22,6 +27,7 @@ export type AppPage =
   | 'overview'
   | 'users'
   | 'announcements'
+  | 'helpdesk'
   | 'form'
   | 'company'
   | 'profile'
@@ -40,6 +46,7 @@ const ADMIN_NAV: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: BarChart3 },
   { id: 'users', label: 'User Management', icon: Users },
   { id: 'announcements', label: 'Announcements', icon: Megaphone },
+  { id: 'helpdesk', label: 'Help Desk', icon: LifeBuoy },
   { id: 'form', label: 'New CAR / NC / OFI', icon: FilePlus2 },
   { id: 'company', label: 'Company Details', icon: Building2 },
   { id: 'profile', label: 'My Profile', icon: UserCircle },
@@ -52,6 +59,7 @@ const AUDITOR_NAV: NavItem[] = ADMIN_NAV.filter((item) => item.id !== 'company')
 const EMPLOYEE_NAV: NavItem[] = [
   { id: 'employee', label: 'My Department', icon: ClipboardList },
   { id: 'announcements', label: 'Announcements', icon: Megaphone },
+  { id: 'helpdesk', label: 'Help Desk', icon: LifeBuoy },
   { id: 'profile', label: 'My Profile', icon: UserCircle },
   { id: 'settings', label: 'Settings', icon: Settings },
   { id: 'terms', label: 'Terms of Use', icon: FileText },
@@ -62,6 +70,8 @@ export function Layout({
   activePage,
   company,
   onNavigate,
+  onViewCar,
+  onOpenHelpDesk,
   onLogout,
   children,
 }: {
@@ -69,10 +79,16 @@ export function Layout({
   activePage: AppPage;
   company: Record<string, string>;
   onNavigate: (page: AppPage, carNo?: string) => void;
+  onViewCar?: (carNo: string) => void;
+  onOpenHelpDesk?: (tab: 'tickets' | 'dm', id?: string) => void;
   onLogout: () => void;
   children: React.ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const bellWrapRef = useRef<HTMLDivElement | null>(null);
+
   const items =
     user.role === 'Admin'
       ? ADMIN_NAV
@@ -81,6 +97,80 @@ export function Layout({
       : EMPLOYEE_NAV;
   const companyName = company.CompanyName || 'FCAT ISO Audit';
   const standard = company.Standard || 'ISO 9001:2015';
+
+  const loadNotifications = useCallback(() => {
+    api
+      .getNotifications()
+      .then((rows) => setNotifications(rows || []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadNotifications();
+  }, [loadNotifications, user.userId]);
+
+  const handleRealtime = useCallback((evt: RealtimeMessage) => {
+    if (evt.type === 'notification:new') {
+      const notif = evt.payload as NotificationItem;
+      if (!notif?.NotificationID) return;
+      setNotifications((prev) =>
+        prev.some((n) => n.NotificationID === notif.NotificationID) ? prev : [notif, ...prev]
+      );
+    }
+  }, []);
+
+  useRealtimeSubscription(handleRealtime, true);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (bellWrapRef.current && !bellWrapRef.current.contains(e.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNotifOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [notifOpen]);
+
+  const unreadCount = useMemo(() => notifications.filter((n) => !n.Read).length, [notifications]);
+
+  const handleMarkAllRead = async () => {
+    try {
+      await api.markAllNotificationsRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, Read: true })));
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleNotificationClick = async (n: NotificationItem) => {
+    if (!n.Read) {
+      api.markNotificationRead(n.NotificationID).catch(() => {});
+      setNotifications((prev) =>
+        prev.map((item) => (item.NotificationID === n.NotificationID ? { ...item, Read: true } : item))
+      );
+    }
+    setNotifOpen(false);
+    const ref = String(n.RelatedCARNo || '').trim();
+    if (ref.startsWith('HELP:')) {
+      const ticketId = ref.slice(5);
+      if (onOpenHelpDesk) onOpenHelpDesk('tickets', ticketId);
+      else onNavigate('helpdesk');
+    } else if (ref.startsWith('DM:')) {
+      const senderId = ref.slice(3);
+      if (onOpenHelpDesk) onOpenHelpDesk('dm', senderId);
+      else onNavigate('helpdesk');
+    } else if (ref && onViewCar) {
+      onViewCar(ref);
+    }
+  };
 
   const handleNavClick = (id: AppPage) => {
     setMobileOpen(false);
@@ -112,10 +202,91 @@ export function Layout({
           </button>
         </div>
 
-        <div className="flex items-center gap-4 shrink-0">
-          <span className="hidden sm:inline text-xs sm:text-sm text-white/85 whitespace-nowrap">
+        <div className="flex items-center gap-2.5 sm:gap-3.5 shrink-0">
+          <span className="hidden md:inline text-xs sm:text-sm text-white/85 whitespace-nowrap">
             {user.name} · {roleLabel(user.role)}
           </span>
+
+          {/* Notification Bell beside Log out */}
+          <div className="relative" ref={bellWrapRef}>
+            <button
+              type="button"
+              onClick={() => setNotifOpen((v) => !v)}
+              aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
+              className="relative inline-flex items-center justify-center p-2 rounded-md bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+            >
+              <Bell className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#C9A227] text-[#4A1219] text-[10px] font-extrabold flex items-center justify-center shadow font-mono-tabular">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {notifOpen && (
+              <div
+                role="dialog"
+                aria-label="Notifications"
+                className="absolute right-0 mt-2 w-80 sm:w-96 bg-white text-[#2B2323] border border-[#EAD9D4] rounded-xl shadow-2xl overflow-hidden z-50"
+              >
+                <div className="px-4 py-3 border-b border-[#EAD9D4] bg-[#FBF7F4] flex items-center justify-between gap-2">
+                  <div className="font-bold text-sm text-[#4A1219] flex items-center gap-1.5">
+                    <Bell className="h-4 w-4 text-[#6B1A25]" />
+                    Notifications
+                    {unreadCount > 0 && (
+                      <span className="text-xs font-mono-tabular px-1.5 py-0.5 rounded bg-[#F4ECE9] text-[#6B1A25]">
+                        {unreadCount} new
+                      </span>
+                    )}
+                  </div>
+                  {unreadCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleMarkAllRead}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-[#6B1A25] hover:underline cursor-pointer"
+                    >
+                      <CheckCheck className="h-3.5 w-3.5" />
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+
+                <div className="max-h-96 overflow-y-auto divide-y divide-[#F0E4DF]">
+                  {notifications.length === 0 ? (
+                    <div className="py-10 px-4 text-center text-xs text-[#7A6F6F]">
+                      You have no notifications yet.
+                    </div>
+                  ) : (
+                    notifications.slice(0, 25).map((n) => (
+                      <button
+                        key={n.NotificationID}
+                        type="button"
+                        onClick={() => handleNotificationClick(n)}
+                        className={`w-full text-left px-4 py-3 hover:bg-[#FCF6F3] transition-colors cursor-pointer flex items-start gap-2.5 ${
+                          n.Read ? 'bg-white' : 'bg-[#FBF4F2]'
+                        }`}
+                      >
+                        <span
+                          className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${
+                            n.Read ? 'bg-transparent' : 'bg-[#6B1A25]'
+                          }`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className={`text-xs leading-relaxed ${n.Read ? 'text-[#574D4D]' : 'text-[#2B2323] font-semibold'}`}>
+                            {n.Message}
+                          </div>
+                          <div className="text-[11px] text-[#7A6F6F] mt-1 font-mono-tabular">
+                            {fmtDateTime(n.CreatedAt)}
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             onClick={onLogout}
