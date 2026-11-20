@@ -97,7 +97,7 @@ export function SettingsPage({
 
           <div>
             <label className="block text-xs font-semibold text-[#4A1219] mb-1">
-              Auto-send email for my notifications (CARs, deadlines, Help Desk, messages)
+              Auto-send email for notifications (Announcements, Concerns &amp; Tickets, CAR updates, Audit Schedules)
             </label>
             <select
               disabled={!loaded}
@@ -129,7 +129,7 @@ export function SettingsPage({
             <div className="rounded-lg border border-[#EAD9D4] bg-[#FCF6F3] px-3.5 py-2.5 text-xs text-[#4A1219] space-y-1">
               {emailConfigured ? (
                 <p className="m-0">
-                  Automatic email delivery is active{emailFrom ? ` via ${emailFrom}` : ''}. Notifications sent to you will be emailed to <strong>{user.email}</strong>.
+                  Automatic email delivery is active{emailFrom ? ` via ${emailFrom}` : ''}. Announcements, Concerns &amp; Tickets, Audit Schedules, and CAR actions (new, edited, flagged, deadline, follow-up, reopened, closed, comments) will be emailed to <strong>{user.email}</strong>. Private direct messages stay strictly in-app for DPO &amp; security privacy.
                 </p>
               ) : (
                 <p className="m-0 text-[#7A6F6F]">

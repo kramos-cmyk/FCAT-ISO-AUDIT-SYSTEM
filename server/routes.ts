@@ -8,7 +8,14 @@ import {
   PROCESS_OWNER_REQUIRED_FIELDS,
   REQUIRED_FIELDS,
 } from './constants.js';
-import { getEmailSummary, isEmailConfigured, sendNotificationEmail } from './mailer.js';
+import {
+  getEmailSummary,
+  isEmailConfigured,
+  sendAnnouncementEmail,
+  sendConversationDigestEmail,
+  sendNotificationEmail,
+  type DigestMessageItem,
+} from './mailer.js';
 import { generateCarPdfBuffer } from './pdfExport.js';
 import { emitToUsers } from './realtime.js';
 import {
@@ -153,6 +160,7 @@ function userCanAccessCar(userId: string, userDept: string, rec: CarRecord): boo
 
 async function dispatchNotificationEmail(notif: NotificationRecord): Promise<void> {
   if (!isEmailConfigured()) return;
+  if (String(notif.RelatedCARNo || '').trim().startsWith('DM:')) return;
   try {
     const store = getStore();
     const recipient = await store.findUserById(notif.ToUserID);
@@ -187,10 +195,187 @@ async function dispatchNotificationEmail(notif: NotificationRecord): Promise<voi
   }
 }
 
-async function createAndPushNotification(notif: NotificationRecord) {
+async function dispatchAnnouncementEmails(announcement: {
+  AnnouncementID: string;
+  Title: string;
+  Message: string;
+  ImageLinks: string[];
+  PostedByName: string;
+}): Promise<void> {
+  if (!isEmailConfigured()) return;
+  try {
+    const store = getStore();
+    const [users, settings, company] = await Promise.all([
+      store.listUsers(),
+      store.getSettings(),
+      store.getCompanyDetails().catch(() => ({}) as Record<string, string>),
+    ]);
+
+    const seenEmails = new Set<string>();
+    const targets = users.filter((u) => {
+      if (u.Status !== 'Active') return false;
+      const email = String(u.Email || '').trim();
+      if (!email || !email.includes('@')) return false;
+      if (settings[`NotifyEmail_${u.UserID}`] === 'false') return false;
+      const key = email.toLowerCase();
+      if (seenEmails.has(key)) return false;
+      seenEmails.add(key);
+      return true;
+    });
+
+    for (const recipient of targets) {
+      const res = await sendAnnouncementEmail({
+        toEmail: recipient.Email,
+        toName: recipient.Name,
+        postedByName: announcement.PostedByName,
+        companyName: company.CompanyName || '',
+        title: announcement.Title,
+        message: announcement.Message,
+        imageCount: announcement.ImageLinks.length,
+      });
+      if (!res.ok && !res.skipped) {
+        console.error(`[Mailer] Failed to email announcement to ${recipient.Email}:`, res.error);
+      }
+    }
+  } catch (err) {
+    console.error('[Mailer] Announcement email dispatch error:', err instanceof Error ? err.message : err);
+  }
+}
+
+interface PendingMessageBatch {
+  recipientId: string;
+  conversationKey: string;
+  conversationTitle: string;
+  category: string;
+  reference?: string;
+  actionPath: string;
+  isDmFromUserId?: string;
+  firstQueuedAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  messages: DigestMessageItem[];
+}
+
+const pendingMessageEmailBatches = new Map<string, PendingMessageBatch>();
+
+function getBatchQuietMs(): number {
+  const sec = Number(process.env.EMAIL_MESSAGE_BATCH_SECONDS || 3600);
+  const clamped = Number.isFinite(sec) && sec >= 5 ? Math.min(sec, 86400) : 3600;
+  return clamped * 1000;
+}
+
+const BATCH_MAX_WAIT_MS = 60 * 60 * 1000;
+
+function clearPendingConversationEmail(recipientId: string, conversationKey: string): void {
+  const mapKey = `${recipientId}|${conversationKey}`;
+  const batch = pendingMessageEmailBatches.get(mapKey);
+  if (!batch) return;
+  if (batch.timer) clearTimeout(batch.timer);
+  pendingMessageEmailBatches.delete(mapKey);
+}
+
+async function flushConversationEmailBatch(mapKey: string): Promise<void> {
+  const batch = pendingMessageEmailBatches.get(mapKey);
+  if (!batch) return;
+  if (batch.timer) clearTimeout(batch.timer);
+  pendingMessageEmailBatches.delete(mapKey);
+
+  if (!isEmailConfigured() || batch.messages.length === 0) return;
+
+  try {
+    const store = getStore();
+    const recipient = await store.findUserById(batch.recipientId);
+    if (!recipient || recipient.Status !== 'Active' || !recipient.Email) return;
+
+    const settings = await store.getSettings();
+    if (settings[`NotifyEmail_${recipient.UserID}`] === 'false') return;
+
+    let messagesToSend = batch.messages;
+
+    // For Direct Messages, skip any message already read live in the conversation
+    if (batch.isDmFromUserId) {
+      const dmList = await store.listDirectMessagesForUser(recipient.UserID);
+      const unreadIds = new Set(
+        dmList
+          .filter((m) => m.FromUserID === batch.isDmFromUserId && m.ToUserID === recipient.UserID && !m.Read)
+          .map((m) => m.MessageID)
+      );
+      messagesToSend = messagesToSend.filter((m) => !m.messageId || unreadIds.has(m.messageId));
+      if (messagesToSend.length === 0) return;
+    }
+
+    const company = await store.getCompanyDetails().catch(() => ({}) as Record<string, string>);
+    const res = await sendConversationDigestEmail({
+      toEmail: recipient.Email,
+      toName: recipient.Name,
+      companyName: company.CompanyName || '',
+      conversationTitle: batch.conversationTitle,
+      category: batch.category,
+      reference: batch.reference,
+      actionPath: batch.actionPath,
+      messages: messagesToSend,
+    });
+    if (!res.ok && !res.skipped) {
+      console.error(`[Mailer] Failed to send conversation digest to ${recipient.Email}:`, res.error);
+    }
+  } catch (err) {
+    console.error('[Mailer] Conversation digest error:', err instanceof Error ? err.message : err);
+  }
+}
+
+function queueConversationEmail(params: {
+  recipientId: string;
+  conversationKey: string;
+  conversationTitle: string;
+  category: string;
+  reference?: string;
+  actionPath: string;
+  isDmFromUserId?: string;
+  item: DigestMessageItem;
+}): void {
+  if (!isEmailConfigured()) return;
+  if (params.conversationKey.startsWith('DM:') || params.isDmFromUserId) return;
+  const mapKey = `${params.recipientId}|${params.conversationKey}`;
+  const now = Date.now();
+  const quietMs = getBatchQuietMs();
+
+  let batch = pendingMessageEmailBatches.get(mapKey);
+  if (!batch) {
+    batch = {
+      recipientId: params.recipientId,
+      conversationKey: params.conversationKey,
+      conversationTitle: params.conversationTitle,
+      category: params.category,
+      reference: params.reference,
+      actionPath: params.actionPath,
+      isDmFromUserId: params.isDmFromUserId,
+      firstQueuedAt: now,
+      timer: null,
+      messages: [],
+    };
+    pendingMessageEmailBatches.set(mapKey, batch);
+  }
+
+  batch.messages.push(params.item);
+  if (batch.timer) clearTimeout(batch.timer);
+
+  const elapsed = now - batch.firstQueuedAt;
+  const remainingMax = Math.max(0, BATCH_MAX_WAIT_MS - elapsed);
+  const delay = Math.min(quietMs, remainingMax);
+
+  batch.timer = setTimeout(() => {
+    void flushConversationEmailBatch(mapKey);
+  }, delay);
+}
+
+async function createAndPushNotification(
+  notif: NotificationRecord,
+  options?: { skipImmediateEmail?: boolean }
+) {
   await getStore().createNotification(notif);
   emitToUsers([notif.ToUserID], { type: 'notification:new', payload: notif });
-  void dispatchNotificationEmail(notif);
+  if (!options?.skipImmediateEmail) {
+    void dispatchNotificationEmail(notif);
+  }
 }
 
 async function notifyDepartment(
@@ -218,6 +403,80 @@ async function notifyDepartment(
       FromUserID: fromUserId,
       Message: message,
       RelatedCARNo: carNo,
+      Read: false,
+      CreatedAt: nowIso(),
+    });
+  }
+}
+
+async function notifyCarTarget(
+  fromUserId: string,
+  rec: Pick<CarRecord, 'EmployeeID' | 'Department' | 'EmployeeName'>,
+  message: string,
+  carNo: string
+) {
+  if (rec.EmployeeID && rec.EmployeeID !== fromUserId) {
+    await createAndPushNotification({
+      NotificationID: newId('N'),
+      ToUserID: rec.EmployeeID,
+      FromUserID: fromUserId,
+      Message: message,
+      RelatedCARNo: carNo,
+      Read: false,
+      CreatedAt: nowIso(),
+    });
+  } else if (!rec.EmployeeID) {
+    await notifyDepartment(fromUserId, [rec.Department, rec.EmployeeName], message, carNo);
+  }
+}
+
+async function notifyAuditors(fromUserId: string, message: string, relatedRef: string) {
+  const store = getStore();
+  const users = await store.listUsers();
+  const auditors = users.filter(
+    (u) =>
+      u.Status === 'Active' &&
+      u.UserID !== fromUserId &&
+      isAuditorOrAdmin(normalizeUserRole(u.Role))
+  );
+  for (const u of auditors) {
+    await createAndPushNotification({
+      NotificationID: newId('N'),
+      ToUserID: u.UserID,
+      FromUserID: fromUserId,
+      Message: message,
+      RelatedCARNo: relatedRef,
+      Read: false,
+      CreatedAt: nowIso(),
+    });
+  }
+}
+
+async function notifyAuditSchedule(fromUserId: string, schedule: AuditSchedule, actionLabel: string) {
+  const store = getStore();
+  const users = await store.listUsers();
+  const targetDept = String(schedule.Department || '').trim();
+  const isAllServices = !targetDept || targetDept === 'All Services';
+
+  const targets = users.filter((u) => {
+    if (u.Status !== 'Active' || u.UserID === fromUserId) return false;
+    if (isAllServices) return true;
+    const isStaff = isAuditorOrAdmin(normalizeUserRole(u.Role));
+    return isStaff || userHasDepartment(u.Department, targetDept);
+  });
+
+  const timeInfo = schedule.TimeWindow ? ` (${schedule.TimeWindow})` : '';
+  const leadInfo = schedule.LeadAuditor ? ` · Lead Auditor: ${schedule.LeadAuditor}` : '';
+  const statusInfo = schedule.Status && schedule.Status !== 'Scheduled' ? ` · Status: ${schedule.Status}` : '';
+  const message = `Audit Schedule ${actionLabel}: "${schedule.Title}" (${schedule.AuditType}) on ${schedule.AuditDate}${timeInfo} for ${schedule.Department}${leadInfo}${statusInfo}.`;
+
+  for (const u of targets) {
+    await createAndPushNotification({
+      NotificationID: newId('N'),
+      ToUserID: u.UserID,
+      FromUserID: fromUserId,
+      Message: message,
+      RelatedCARNo: `AUDIT:${schedule.ScheduleID}`,
       Read: false,
       CreatedAt: nowIso(),
     });
@@ -865,7 +1124,7 @@ export function createApiRouter(): express.Router {
           carNo
         );
       } else if (reassignedTo?.EmployeeID) {
-        await store.createNotification({
+        await createAndPushNotification({
           NotificationID: newId('N'),
           ToUserID: reassignedTo.EmployeeID,
           FromUserID: req.user!.userId,
@@ -874,6 +1133,19 @@ export function createApiRouter(): express.Router {
           Read: false,
           CreatedAt: nowIso(),
         });
+      } else if (isAdmin) {
+        await notifyCarTarget(
+          req.user!.userId,
+          rec,
+          `CAR record ${carNo} was updated by ${req.user!.name}.`,
+          carNo
+        );
+      } else {
+        await notifyAuditors(
+          req.user!.userId,
+          `${req.user!.name} (${rec.Department || 'Process Owner'}) submitted/updated CAR ${carNo}.`,
+          carNo
+        );
       }
 
       await store.appendLog({ Timestamp: nowIso(), UserID: req.user!.userId, Action: 'UPDATE_CAR', Details: carNo });
@@ -923,8 +1195,17 @@ export function createApiRouter(): express.Router {
     try {
       const { carNo } = req.params;
       const store = getStore();
+      const rec = await store.getCAR(carNo);
       const ok = await store.updateCAR(carNo, { Status: 'Closed', UpdatedAt: nowIso() });
       if (ok) {
+        if (rec) {
+          await notifyCarTarget(
+            req.user!.userId,
+            rec,
+            `CAR record ${carNo} has been closed by ${req.user!.name}.`,
+            carNo
+          );
+        }
         await store.appendLog({ Timestamp: nowIso(), UserID: req.user!.userId, Action: 'CLOSE_CAR', Details: carNo });
       }
       res.json({ ok });
@@ -937,10 +1218,19 @@ export function createApiRouter(): express.Router {
     try {
       const { carNo } = req.params;
       const store = getStore();
+      const rec = await store.getCAR(carNo);
       const ok = await store.updateCAR(carNo, { Status: 'Open', UpdatedAt: nowIso() });
       if (!ok) {
         res.json({ ok: false, error: 'Record not found.' });
         return;
+      }
+      if (rec) {
+        await notifyCarTarget(
+          req.user!.userId,
+          rec,
+          `CAR record ${carNo} has been reopened by ${req.user!.name}.`,
+          carNo
+        );
       }
       await store.appendLog({ Timestamp: nowIso(), UserID: req.user!.userId, Action: 'REOPEN_CAR', Details: carNo });
       res.json({ ok: true });
@@ -1016,6 +1306,12 @@ export function createApiRouter(): express.Router {
         CreatedAt: nowIso(),
       });
       await store.updateCAR(carNo, { FollowUpEntries: JSON.stringify(entries), UpdatedAt: nowIso() });
+      await notifyCarTarget(
+        req.user!.userId,
+        rec,
+        `Follow-up verification (${FollowUpDate}: ${ResultOfVerification}) added to CAR ${carNo} by ${req.user!.name}.`,
+        carNo
+      );
       await store.appendLog({ Timestamp: nowIso(), UserID: req.user!.userId, Action: 'ADD_FOLLOWUP', Details: carNo });
       res.json({ ok: true, entries });
     } catch (err) {
@@ -1072,7 +1368,7 @@ export function createApiRouter(): express.Router {
       await store.addCarComment(comment);
       const notifyMsg = `New comment on your record ${carNo}: ${msg}`;
       if (rec.EmployeeID) {
-        await store.createNotification({
+        await createAndPushNotification({
           NotificationID: newId('N'),
           ToUserID: rec.EmployeeID,
           FromUserID: req.user!.userId,
@@ -1365,6 +1661,7 @@ export function createApiRouter(): express.Router {
       const store = getStore();
       await store.createAnnouncement(item);
       await store.appendLog({ Timestamp: now, UserID: req.user!.userId, Action: 'CREATE_ANNOUNCEMENT', Details: title });
+      void dispatchAnnouncementEmails(item);
       res.json({ ok: true, announcement: item });
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to post announcement.' });
@@ -1737,27 +2034,65 @@ export function createApiRouter(): express.Router {
       emitToUsers([req.user!.userId, ...recipients], { type: 'helpdesk:message', payload: msg });
       emitToUsers([req.user!.userId, ...recipients], { type: 'helpdesk:ticket_updated', payload: updatedTicket });
 
+      clearPendingConversationEmail(req.user!.userId, `HELP:${ticket.TicketID}`);
+
       if (ticket.CreatedBy !== req.user!.userId) {
-        await createAndPushNotification({
-          NotificationID: newId('N'),
-          ToUserID: ticket.CreatedBy,
-          FromUserID: req.user!.userId,
-          Message: `${req.user!.name} replied to your Help Desk concern (${ticket.TicketID}): ${text.slice(0, 90)}`,
-          RelatedCARNo: `HELP:${ticket.TicketID}`,
-          Read: false,
-          CreatedAt: now,
+        await createAndPushNotification(
+          {
+            NotificationID: newId('N'),
+            ToUserID: ticket.CreatedBy,
+            FromUserID: req.user!.userId,
+            Message: `${req.user!.name} replied to your Help Desk concern (${ticket.TicketID}): ${text.slice(0, 90)}`,
+            RelatedCARNo: `HELP:${ticket.TicketID}`,
+            Read: false,
+            CreatedAt: now,
+          },
+          { skipImmediateEmail: true }
+        );
+        queueConversationEmail({
+          recipientId: ticket.CreatedBy,
+          conversationKey: `HELP:${ticket.TicketID}`,
+          conversationTitle: ticket.Subject,
+          category: 'Help Desk Concern',
+          reference: ticket.TicketID,
+          actionPath: '/?page=helpdesk',
+          item: {
+            messageId: msg.MessageID,
+            senderId: req.user!.userId,
+            senderName: req.user!.name,
+            text,
+            createdAt: now,
+          },
         });
       } else {
         for (const uid of staffIds) {
           if (uid === req.user!.userId) continue;
-          await createAndPushNotification({
-            NotificationID: newId('N'),
-            ToUserID: uid,
-            FromUserID: req.user!.userId,
-            Message: `New reply from ${req.user!.name} on Help Desk ${ticket.TicketID}: ${text.slice(0, 90)}`,
-            RelatedCARNo: `HELP:${ticket.TicketID}`,
-            Read: false,
-            CreatedAt: now,
+          await createAndPushNotification(
+            {
+              NotificationID: newId('N'),
+              ToUserID: uid,
+              FromUserID: req.user!.userId,
+              Message: `New reply from ${req.user!.name} on Help Desk ${ticket.TicketID}: ${text.slice(0, 90)}`,
+              RelatedCARNo: `HELP:${ticket.TicketID}`,
+              Read: false,
+              CreatedAt: now,
+            },
+            { skipImmediateEmail: true }
+          );
+          queueConversationEmail({
+            recipientId: uid,
+            conversationKey: `HELP:${ticket.TicketID}`,
+            conversationTitle: ticket.Subject,
+            category: 'Help Desk Concern',
+            reference: ticket.TicketID,
+            actionPath: '/?page=helpdesk',
+            item: {
+              messageId: msg.MessageID,
+              senderId: req.user!.userId,
+              senderName: req.user!.name,
+              text,
+              createdAt: now,
+            },
           });
         }
       }
@@ -1935,15 +2270,19 @@ export function createApiRouter(): express.Router {
       await store.createDirectMessage(msg);
       emitToUsers([me.userId, otherId], { type: 'dm:new', payload: msg });
 
-      await createAndPushNotification({
-        NotificationID: newId('N'),
-        ToUserID: otherId,
-        FromUserID: me.userId,
-        Message: `Direct message from ${me.name}: ${text.slice(0, 90)}`,
-        RelatedCARNo: `DM:${me.userId}`,
-        Read: false,
-        CreatedAt: now,
-      });
+      // DPO & Security: Direct Messages send in-app notifications only — never external email.
+      await createAndPushNotification(
+        {
+          NotificationID: newId('N'),
+          ToUserID: otherId,
+          FromUserID: me.userId,
+          Message: `New direct message from ${me.name}`,
+          RelatedCARNo: `DM:${me.userId}`,
+          Read: false,
+          CreatedAt: now,
+        },
+        { skipImmediateEmail: true }
+      );
 
       res.json({ ok: true, message: msg });
     } catch (err) {
@@ -2006,6 +2345,7 @@ export function createApiRouter(): express.Router {
       };
       const store = getStore();
       await store.createAuditSchedule(item);
+      await notifyAuditSchedule(req.user!.userId, item, 'Created');
       await store.appendLog({
         Timestamp: now,
         UserID: req.user!.userId,
@@ -2066,6 +2406,11 @@ export function createApiRouter(): express.Router {
 
       await store.updateAuditSchedule(existing.ScheduleID, updates);
       const updated = { ...existing, ...updates };
+      await notifyAuditSchedule(
+        req.user!.userId,
+        updated,
+        updated.Status === 'Cancelled' ? 'Cancelled' : 'Updated'
+      );
       await store.appendLog({
         Timestamp: nowIso(),
         UserID: req.user!.userId,
@@ -2087,6 +2432,7 @@ export function createApiRouter(): express.Router {
         return;
       }
       await store.deleteAuditSchedule(existing.ScheduleID);
+      await notifyAuditSchedule(req.user!.userId, { ...existing, Status: 'Cancelled' }, 'Cancelled / Removed');
       await store.appendLog({
         Timestamp: nowIso(),
         UserID: req.user!.userId,
