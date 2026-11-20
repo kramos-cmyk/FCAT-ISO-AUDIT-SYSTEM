@@ -70,3 +70,110 @@ h1, h2, h3, .font-display {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--gold-dark);
 }
+
+/* User Workspace Preferences: Text Size */
+html[data-text-size="compact"] {
+  font-size: 15px;
+}
+html[data-text-size="standard"] {
+  font-size: 16px;
+}
+html[data-text-size="large"] {
+  font-size: 17px;
+}
+
+/* User Workspace Preferences: Compact Density */
+html[data-density="compact"] table th,
+html[data-density="compact"] table td {
+  padding-top: 0.42rem !important;
+  padding-bottom: 0.42rem !important;
+}
+
+/* User Workspace Preferences: Crisp Light Theme */
+html[data-theme="light"] {
+  --bg: #F3F4F6;
+  --line: #E2E4E9;
+  --line-soft: #ECEEF2;
+}
+html[data-theme="light"] body,
+html[data-theme="light"] .bg-\[\#F8F4F0\] {
+  background-color: #F3F4F6 !important;
+}
+html[data-theme="light"] .bg-\[\#FCF6F3\],
+html[data-theme="light"] .bg-\[\#FBF7F4\] {
+  background-color: #F9FAFB !important;
+}
+html[data-theme="light"] .border-\[\#EAD9D4\] {
+  border-color: #E2E4E9 !important;
+}
+
+/* User Workspace Preferences: Dark Mode Theme */
+html[data-theme="dark"] {
+  --bg: #161213;
+  --surface: #211B1C;
+  --line: #3C2F31;
+  --line-soft: #2E2426;
+  --text: #F2EAE7;
+  --muted: #B0A3A0;
+  color-scheme: dark;
+}
+html[data-theme="dark"] body,
+html[data-theme="dark"] .bg-\[\#F8F4F0\] {
+  background-color: #161213 !important;
+  color: #F2EAE7;
+}
+html[data-theme="dark"] .bg-white {
+  background-color: #211B1C !important;
+}
+html[data-theme="dark"] .bg-\[\#FCF6F3\],
+html[data-theme="dark"] .bg-\[\#FBF7F4\],
+html[data-theme="dark"] .bg-\[\#FBF4F2\] {
+  background-color: #282022 !important;
+}
+html[data-theme="dark"] .bg-\[\#F7ECEC\],
+html[data-theme="dark"] .bg-\[\#F4ECE9\] {
+  background-color: #362428 !important;
+}
+html[data-theme="dark"] .border-\[\#EAD9D4\],
+html[data-theme="dark"] .border-\[\#F0E4DF\] {
+  border-color: #3C2F31 !important;
+}
+html[data-theme="dark"] .divide-\[\#F0E4DF\] > :not(:last-child) {
+  border-color: #3C2F31 !important;
+}
+html[data-theme="dark"] .text-\[\#2B2323\] {
+  color: #F2EAE7 !important;
+}
+html[data-theme="dark"] .text-\[\#4A1219\] {
+  color: #F3DC99 !important;
+}
+html[data-theme="dark"] .text-\[\#574D4D\],
+html[data-theme="dark"] .text-\[\#6F6464\],
+html[data-theme="dark"] .text-\[\#7A6F6F\],
+html[data-theme="dark"] .text-\[\#8C8080\] {
+  color: #B6A9A6 !important;
+}
+html[data-theme="dark"] .text-\[\#6B1A25\] {
+  color: #F1B3BA !important;
+}
+html[data-theme="dark"] .bg-\[\#C9A227\].text-\[\#4A1219\],
+html[data-theme="dark"] button.bg-\[\#C9A227\] {
+  color: #4A1219 !important;
+}
+html[data-theme="dark"] .bg-\[\#6B1A25\],
+html[data-theme="dark"] button.bg-\[\#6B1A25\] {
+  background-color: #7D212E !important;
+  color: #FFFFFF !important;
+}
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background-color: #2A2224;
+  color: #F2EAE7;
+  border-color: #453639;
+}
+html[data-theme="dark"] input:disabled,
+html[data-theme="dark"] select:disabled {
+  background-color: #1C1718 !important;
+  color: #A79B98 !important;
+}

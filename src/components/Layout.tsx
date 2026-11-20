@@ -23,6 +23,7 @@ import { fmtDateTime, isAuditorRole, roleLabel } from '../lib/format';
 import { useRealtimeSubscription, type RealtimeMessage } from '../lib/realtime';
 import type { NotificationItem, SessionUser } from '../lib/types';
 import { FCATLogo } from './BrandCrest';
+import { DepartmentAvatar } from './DepartmentAvatar';
 
 export type AppPage =
   | 'admin'
@@ -357,8 +358,18 @@ export function Layout({
           </nav>
 
           <div className="px-4 pt-4 mt-4 border-t border-[#F0E4DF] text-xs text-[#7A6F6F]">
-            <div className="font-semibold text-[#4A1219] truncate">{user.name}</div>
-            <div className="truncate mt-0.5">{user.department || roleLabel(user.role)}</div>
+            <button
+              type="button"
+              onClick={() => handleNavClick('profile')}
+              className="w-full flex items-center gap-2.5 text-left hover:opacity-85 transition-opacity cursor-pointer"
+              title="View My Profile"
+            >
+              <DepartmentAvatar department={user.department} role={user.role} size="sm" />
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-[#4A1219] truncate">{user.name}</div>
+                <div className="truncate mt-0.5">{user.department || roleLabel(user.role)}</div>
+              </div>
+            </button>
           </div>
         </aside>
 

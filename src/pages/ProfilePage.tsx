@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { api } from '../lib/api';
 import { roleLabel } from '../lib/format';
 import type { SessionUser } from '../lib/types';
+import { DepartmentAvatar, getDepartmentVisual, splitDepartments } from '../components/DepartmentAvatar';
 import { useToast } from '../components/Toast';
 
 export function ProfilePage({ user }: { user: SessionUser }) {
@@ -10,6 +11,9 @@ export function ProfilePage({ user }: { user: SessionUser }) {
   const [newPw, setNewPw] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const departments = splitDepartments(user.department);
+  const primaryVisual = getDepartmentVisual(departments[0], user.role);
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,7 +51,44 @@ export function ProfilePage({ user }: { user: SessionUser }) {
     <div className="space-y-6">
       <div className="bg-white border border-[#EAD9D4] rounded-xl p-5 sm:p-6 shadow-sm">
         <h1 className="text-2xl font-bold text-[#4A1219] m-0">My Profile</h1>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+
+        {/* Department / Services Profile Image & Identity Header */}
+        <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-4 p-4 rounded-xl bg-[#FCF6F3] border border-[#EAD9D4]">
+          <DepartmentAvatar department={user.department} role={user.role} size="lg" />
+          <div className="min-w-0 flex-1">
+            <div className="text-lg font-bold text-[#4A1219] truncate">{user.name}</div>
+            <div className="text-xs text-[#6F6464] mt-0.5">
+              {user.position ? `${user.position} · ` : ''}
+              {roleLabel(user.role)}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {departments.length > 0 ? (
+                departments.map((dept) => {
+                  const vis = getDepartmentVisual(dept, user.role);
+                  const DeptIcon = vis.icon;
+                  return (
+                    <span
+                      key={dept}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border ${vis.bg} ${vis.fg} ${vis.ring}`}
+                    >
+                      <DeptIcon className="w-3.5 h-3.5 shrink-0" />
+                      {dept}
+                    </span>
+                  );
+                })
+              ) : (
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border ${primaryVisual.bg} ${primaryVisual.fg} ${primaryVisual.ring}`}
+                >
+                  <primaryVisual.icon className="w-3.5 h-3.5 shrink-0" />
+                  {primaryVisual.label}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5">
           <div>
             <label className="block text-xs font-semibold text-[#4A1219] mb-1">Full Name</label>
             <input
@@ -67,11 +108,11 @@ export function ProfilePage({ user }: { user: SessionUser }) {
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-[#4A1219] mb-1">Department</label>
+            <label className="block text-xs font-semibold text-[#4A1219] mb-1">Department / Services</label>
             <input
               type="text"
               disabled
-              value={user.department || ''}
+              value={user.department || 'Institutional / Admin'}
               className="w-full rounded-lg border border-[#EAD9D4] bg-[#F8F4F0] px-3 py-2 text-sm text-[#7A6F6F]"
             />
           </div>

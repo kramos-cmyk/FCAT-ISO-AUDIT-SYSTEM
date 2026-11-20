@@ -10,6 +10,7 @@ import {
   setUnauthorizedHandler,
 } from './lib/api';
 import { isAuditorRole } from './lib/format';
+import { applyUserPreferences, loadUserPreferences, resetAppliedPreferences } from './lib/preferences';
 import { disconnectRealtime } from './lib/realtime';
 import type { SessionUser } from './lib/types';
 import { CarViewModal } from './components/CarViewModal';
@@ -96,6 +97,7 @@ function AppInner() {
 
   useEffect(() => {
     if (user) {
+      applyUserPreferences(loadUserPreferences(user.userId));
       loadCompany(true);
       // Verify token & refresh user role/departments silently on mount
       api
@@ -108,8 +110,10 @@ function AppInner() {
           }
         })
         .catch(() => {});
+    } else {
+      resetAppliedPreferences();
     }
-  }, [Boolean(user), loadCompany]);
+  }, [Boolean(user), user?.userId, loadCompany]);
 
   useEffect(() => {
     const onPop = () => {
