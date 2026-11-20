@@ -1,4 +1,4 @@
-export type UserRole = 'Admin' | 'Auditor' | 'Employee';
+export type UserRole = 'Admin' | 'Auditor' | 'Employee' | 'Auditor+Employee' | 'Admin+Employee';
 export type UserStatus = 'Active' | 'Locked';
 
 export interface SessionUser {

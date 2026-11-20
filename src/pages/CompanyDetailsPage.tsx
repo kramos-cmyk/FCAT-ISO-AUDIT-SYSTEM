@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, Database, FileSpreadsheet, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { api } from '../lib/api';
+import { isSystemAdminRole } from '../lib/format';
 import type { SessionUser, StorageStatus } from '../lib/types';
 import { useToast } from '../components/Toast';
 
@@ -16,7 +17,7 @@ export function CompanyDetailsPage({
   onCompanyUpdated: () => void;
 }) {
   const { showToast } = useToast();
-  const isAdmin = user.role === 'Admin';
+  const isAdmin = isSystemAdminRole(user.role);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 

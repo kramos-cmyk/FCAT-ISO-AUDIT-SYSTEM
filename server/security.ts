@@ -5,18 +5,40 @@ import type { SessionUser, UserRole, WhyWhyFactors } from './types.js';
 
 export function normalizeUserRole(raw: unknown): UserRole {
   const val = String(raw || '').trim();
-  if (val === 'Admin' || val === 'System Administrator') return 'Admin';
-  if (val === 'Auditor' || val === 'Auditor Account') return 'Auditor';
+  if (
+    val === 'Admin+Employee' ||
+    val === 'Auditor+Employee' ||
+    val === 'Admin' ||
+    val === 'Auditor' ||
+    val === 'Employee'
+  ) {
+    return val;
+  }
+  const lower = val.toLowerCase();
+  const hasAdmin = /\b(admin|system admin|system administrator)\b/.test(lower);
+  const hasAuditor = /\b(auditor|auditor account)\b/.test(lower);
+  const hasOwner = /\b(employee|process owner|owner)\b/.test(lower);
+
+  if (hasAdmin && hasOwner) return 'Admin+Employee';
+  if (hasAuditor && hasOwner) return 'Auditor+Employee';
+  if (hasAdmin) return 'Admin';
+  if (hasAuditor) return 'Auditor';
   return 'Employee';
 }
 
 export function isSystemAdmin(role: unknown): boolean {
-  return normalizeUserRole(role) === 'Admin';
+  const r = normalizeUserRole(role);
+  return r === 'Admin' || r === 'Admin+Employee';
 }
 
 export function isAuditorOrAdmin(role: unknown): boolean {
   const r = normalizeUserRole(role);
-  return r === 'Admin' || r === 'Auditor';
+  return r === 'Admin' || r === 'Admin+Employee' || r === 'Auditor' || r === 'Auditor+Employee';
+}
+
+export function isProcessOwner(role: unknown): boolean {
+  const r = normalizeUserRole(role);
+  return r === 'Employee' || r === 'Auditor+Employee' || r === 'Admin+Employee';
 }
 
 const EPHEMERAL_FALLBACK_SECRET = crypto.randomBytes(32).toString('hex');

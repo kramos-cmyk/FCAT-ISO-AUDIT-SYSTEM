@@ -8,6 +8,7 @@ import {
   fmtDateTime,
   followUpsOf,
   isAuditorRole,
+  isProcessOwnerRole,
   normalizeInputDate,
   possibleRootCausesOf,
   safeUrl,
@@ -39,15 +40,27 @@ export function CarFormPage({
   carNo,
   user,
   company,
+  mode,
   onDone,
 }: {
   carNo?: string;
   user: SessionUser;
   company: Record<string, string>;
+  mode?: 'auditor' | 'owner';
   onDone: () => void;
 }) {
   const { showToast } = useToast();
-  const isAuditor = isAuditorRole(user.role);
+  const canBeAuditor = isAuditorRole(user.role);
+  const canBeOwner = isProcessOwnerRole(user.role);
+  const isDualRole = canBeAuditor && canBeOwner;
+  const [roleMode, setRoleMode] = useState<'auditor' | 'owner'>(() =>
+    mode === 'owner' && canBeOwner ? 'owner' : canBeAuditor ? 'auditor' : 'owner'
+  );
+  const isAuditor = roleMode === 'auditor' && canBeAuditor;
+
+  useEffect(() => {
+    setRoleMode(mode === 'owner' && canBeOwner ? 'owner' : canBeAuditor ? 'auditor' : 'owner');
+  }, [mode, carNo, canBeAuditor, canBeOwner]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -103,7 +116,7 @@ export function CarFormPage({
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (!carNo && !isAuditor) {
+    if (!carNo && !canBeAuditor) {
       showToast(
         'Only Auditors can raise a new finding. Open an existing record from your department list to work on it.',
         'error'
@@ -192,7 +205,7 @@ export function CarFormPage({
     return () => {
       cancelled = true;
     };
-  }, [carNo, isAuditor]);
+  }, [carNo, canBeAuditor]);
 
   const deptOptions = useMemo(() => {
     const list = departments.slice();
@@ -337,6 +350,8 @@ export function CarFormPage({
       if (isAuditor) {
         payload.ReceivedService = receivedService;
         payload.EmployeeID = '';
+      } else if (editRecord) {
+        payload.submitAs = 'owner';
       }
 
       if (editRecord) {
@@ -421,6 +436,49 @@ export function CarFormPage({
       )}
 
       <div className="bg-white border border-[#EAD9D4] rounded-xl p-5 sm:p-6 shadow-sm space-y-6">
+        {isDualRole && editRecord && (
+          <div className="bg-[#FAF6F4] border border-[#EAD9D4] rounded-lg px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="text-xs text-[#4A1219]">
+              <div className="font-bold">Dual-Role Account: Auditor &amp; Process Owner</div>
+              <div className="text-[#7A6F6F] mt-0.5">
+                {isAuditor
+                  ? 'Currently editing in Auditor Mode (Finding Details & Follow-up Verification).'
+                  : 'Currently editing in Process Owner Mode (Department Response, Evidence & Flag Resubmission).'}
+              </div>
+            </div>
+            <div className="inline-flex rounded-lg border border-[#EAD9D4] bg-white p-0.5 shrink-0 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  setRoleMode('owner');
+                  setErrors({});
+                }}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer transition-colors ${
+                  roleMode === 'owner'
+                    ? 'bg-[#6B1A25] text-white'
+                    : 'text-[#4A1219] hover:bg-[#F8F4F0]'
+                }`}
+              >
+                Process Owner Mode
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRoleMode('auditor');
+                  setErrors({});
+                }}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer transition-colors ${
+                  roleMode === 'auditor'
+                    ? 'bg-[#6B1A25] text-white'
+                    : 'text-[#4A1219] hover:bg-[#F8F4F0]'
+                }`}
+              >
+                Auditor Mode
+              </button>
+            </div>
+          </div>
+        )}
+
         <p className="text-xs text-[#7A6F6F] m-0">
           Based on FO-RI-05 Corrective Action Report. Fields marked{' '}
           <span className="text-[#A32424]">*</span> are required.

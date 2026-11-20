@@ -9,7 +9,7 @@ import {
   saveSession,
   setUnauthorizedHandler,
 } from './lib/api';
-import { isAuditorRole } from './lib/format';
+import { isAuditorRole, isProcessOwnerRole, isSystemAdminRole } from './lib/format';
 import { applyUserPreferences, loadUserPreferences, resetAppliedPreferences } from './lib/preferences';
 import { disconnectRealtime } from './lib/realtime';
 import type { SessionUser } from './lib/types';
@@ -33,11 +33,13 @@ import { UsersPage } from './pages/UsersPage';
 const AUDITOR_PAGES: AppPage[] = ['admin', 'overview', 'users'];
 const SYSTEM_ADMIN_ONLY_PAGES: AppPage[] = ['company'];
 
-function readInitialRoute(): { page: AppPage | 'login'; carNo?: string } {
+function readInitialRoute(): { page: AppPage | 'login'; carNo?: string; mode?: 'auditor' | 'owner' } {
   const params = new URLSearchParams(window.location.search);
   const p = params.get('page') as AppPage | 'login' | null;
   const car = params.get('car') || undefined;
-  return { page: p || 'admin', carNo: car };
+  const modeParam = params.get('mode');
+  const mode = modeParam === 'owner' ? 'owner' : modeParam === 'auditor' ? 'auditor' : undefined;
+  return { page: p || 'admin', carNo: car, mode };
 }
 
 function AppInner() {
@@ -51,26 +53,28 @@ function AppInner() {
   const [user, setUser] = useState<SessionUser | null>(() => (getToken() ? getStoredUser() : null));
   const [dpoConfirmed, setDpoConfirmed] = useState<boolean>(() => Boolean(getToken() && !isDpoPending()));
   const [company, setCompany] = useState<Record<string, string>>({});
-  const [route, setRoute] = useState<{ page: AppPage | 'login'; carNo?: string }>(() =>
+  const [route, setRoute] = useState<{ page: AppPage | 'login'; carNo?: string; mode?: 'auditor' | 'owner' }>(() =>
     readInitialRoute()
   );
   const [viewCarNo, setViewCarNo] = useState<string | null>(null);
   const [helpDeskTarget, setHelpDeskTarget] = useState<HelpDeskTarget | null>(null);
 
   const navigate = useCallback(
-    (page: AppPage, carNo?: string) => {
+    (page: AppPage, carNo?: string, mode?: 'auditor' | 'owner') => {
       const targetUser = getStoredUser();
       let safePage = page;
       if (targetUser && !isAuditorRole(targetUser.role) && (AUDITOR_PAGES.includes(page) || SYSTEM_ADMIN_ONLY_PAGES.includes(page))) {
         safePage = 'employee';
-      } else if (targetUser && targetUser.role !== 'Admin' && SYSTEM_ADMIN_ONLY_PAGES.includes(page)) {
+      } else if (targetUser && !isSystemAdminRole(targetUser.role) && SYSTEM_ADMIN_ONLY_PAGES.includes(page)) {
         safePage = 'admin';
       }
-      setRoute({ page: safePage, carNo });
+      setRoute({ page: safePage, carNo, mode });
       const url = new URL(window.location.href);
       url.searchParams.set('page', safePage);
       if (carNo) url.searchParams.set('car', carNo);
       else url.searchParams.delete('car');
+      if (mode) url.searchParams.set('mode', mode);
+      else url.searchParams.delete('mode');
       window.history.pushState({}, '', url.toString());
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },
@@ -188,14 +192,21 @@ function AppInner() {
   if (!isAuditorRole(user.role) && (AUDITOR_PAGES.includes(activePage) || SYSTEM_ADMIN_ONLY_PAGES.includes(activePage))) {
     activePage = 'employee';
   }
-  if (user.role !== 'Admin' && SYSTEM_ADMIN_ONLY_PAGES.includes(activePage)) {
+  if (!isSystemAdminRole(user.role) && SYSTEM_ADMIN_ONLY_PAGES.includes(activePage)) {
     activePage = 'admin';
   }
-  if (isAuditorRole(user.role) && activePage === 'employee') {
+  if (!isProcessOwnerRole(user.role) && activePage === 'employee') {
     activePage = 'admin';
   }
 
-  const returnHome = () => navigate(isAuditorRole(user.role) ? 'admin' : 'employee');
+  const returnHome = () =>
+    navigate(
+      route.mode === 'owner' && isProcessOwnerRole(user.role)
+        ? 'employee'
+        : isAuditorRole(user.role)
+          ? 'admin'
+          : 'employee'
+    );
 
   return (
     <Layout
@@ -210,22 +221,23 @@ function AppInner() {
       {activePage === 'admin' && (
         <AdminDashboardPage
           onViewCar={(c) => setViewCarNo(c)}
-          onEditCar={(c) => navigate('form', c)}
+          onEditCar={(c) => navigate('form', c, 'auditor')}
           onNewCar={() => navigate('form')}
         />
       )}
       {activePage === 'employee' && (
         <EmployeeDashboardPage
           onViewCar={(c) => setViewCarNo(c)}
-          onEditCar={(c) => navigate('form', c)}
+          onEditCar={(c) => navigate('form', c, 'owner')}
         />
       )}
       {activePage === 'overview' && <OverviewPage />}
       {activePage === 'users' && <UsersPage currentUser={user} />}
       {activePage === 'form' && (
         <CarFormPage
-          key={route.carNo || 'new'}
+          key={`${route.carNo || 'new'}_${route.mode || 'default'}`}
           carNo={route.carNo}
+          mode={route.mode}
           user={user}
           company={company}
           onDone={returnHome}

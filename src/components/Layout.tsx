@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '../lib/api';
-import { fmtDateTime, isAuditorRole, roleLabel } from '../lib/format';
+import { fmtDateTime, isAuditorRole, isProcessOwnerRole, isSystemAdminRole, roleLabel } from '../lib/format';
 import { useRealtimeSubscription, type RealtimeMessage } from '../lib/realtime';
 import type { NotificationItem, SessionUser } from '../lib/types';
 import { FCATLogo } from './BrandCrest';
@@ -44,25 +44,15 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
 }
 
-const ADMIN_NAV: NavItem[] = [
+const ALL_NAV_ITEMS: NavItem[] = [
   { id: 'admin', label: 'Auditor Dashboard', icon: ClipboardList },
+  { id: 'employee', label: 'My Department', icon: Building2 },
   { id: 'overview', label: 'Overview', icon: BarChart3 },
   { id: 'users', label: 'User Management', icon: Users },
   { id: 'announcements', label: 'Announcements', icon: Megaphone },
   { id: 'helpdesk', label: 'Help Desk', icon: LifeBuoy },
   { id: 'form', label: 'New CAR / NC / OFI', icon: FilePlus2 },
   { id: 'company', label: 'Company Details', icon: Building2 },
-  { id: 'profile', label: 'My Profile', icon: UserCircle },
-  { id: 'settings', label: 'Settings', icon: Settings },
-  { id: 'terms', label: 'Terms of Use', icon: FileText },
-];
-
-const AUDITOR_NAV: NavItem[] = ADMIN_NAV.filter((item) => item.id !== 'company');
-
-const EMPLOYEE_NAV: NavItem[] = [
-  { id: 'employee', label: 'My Department', icon: ClipboardList },
-  { id: 'announcements', label: 'Announcements', icon: Megaphone },
-  { id: 'helpdesk', label: 'Help Desk', icon: LifeBuoy },
   { id: 'profile', label: 'My Profile', icon: UserCircle },
   { id: 'settings', label: 'Settings', icon: Settings },
   { id: 'terms', label: 'Terms of Use', icon: FileText },
@@ -92,12 +82,20 @@ export function Layout({
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const bellWrapRef = useRef<HTMLDivElement | null>(null);
 
-  const items =
-    user.role === 'Admin'
-      ? ADMIN_NAV
-      : user.role === 'Auditor'
-      ? AUDITOR_NAV
-      : EMPLOYEE_NAV;
+  const hasAuditor = isAuditorRole(user.role);
+  const hasOwner = isProcessOwnerRole(user.role);
+  const hasSysAdmin = isSystemAdminRole(user.role);
+
+  const items = useMemo(() => {
+    return ALL_NAV_ITEMS.filter((item) => {
+      if (item.id === 'admin' || item.id === 'overview' || item.id === 'users' || item.id === 'form') {
+        return hasAuditor;
+      }
+      if (item.id === 'employee') return hasOwner;
+      if (item.id === 'company') return hasSysAdmin;
+      return true;
+    });
+  }, [hasAuditor, hasOwner, hasSysAdmin]);
   const companyName = company.CompanyName || 'FCAT ISO Audit';
   const standard = company.Standard || 'ISO 9001:2015';
 

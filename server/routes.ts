@@ -21,6 +21,7 @@ import { emitToUsers } from './realtime.js';
 import {
   hashPassword,
   isAuditorOrAdmin,
+  isProcessOwner,
   isSystemAdmin,
   isValidEvidenceUrl,
   isValidHttpsOrUploadUrl,
@@ -139,7 +140,7 @@ async function resolveAssignee(employeeId: unknown): Promise<{
   const id = String(employeeId || '').trim();
   if (!id) return { ok: true, EmployeeID: '', EmployeeName: '(Unassigned)' };
   const user = await getStore().findUserById(id);
-  if (!user || user.Role !== 'Employee' || user.Status !== 'Active') {
+  if (!user || !isProcessOwner(normalizeUserRole(user.Role)) || user.Status !== 'Active') {
     return { ok: false, error: 'Selected recipient is not a valid active Process Owner.' };
   }
   return { ok: true, EmployeeID: user.UserID, EmployeeName: user.Name };
@@ -393,8 +394,9 @@ async function notifyDepartment(
   const users = await store.listUsers();
   const targets = users.filter(
     (u) =>
-      u.Role === 'Employee' &&
+      isProcessOwner(normalizeUserRole(u.Role)) &&
       u.Status === 'Active' &&
+      u.UserID !== fromUserId &&
       depts.some((dept) => userHasDepartment(u.Department, dept))
   );
   for (const u of targets) {
@@ -687,7 +689,7 @@ export function createApiRouter(): express.Router {
         return;
       }
       const role = normalizeUserRole(data.role);
-      if (role === 'Admin' && !isSystemAdmin(req.user!.role)) {
+      if (isSystemAdmin(role) && !isSystemAdmin(req.user!.role)) {
         res.status(403).json({ ok: false, error: 'Only a System Administrator can create System Administrator accounts.' });
         return;
       }
@@ -734,7 +736,7 @@ export function createApiRouter(): express.Router {
       }
       const existingRole = normalizeUserRole(existing.Role);
       const role = normalizeUserRole(data.role);
-      if (!isSystemAdmin(req.user!.role) && (existingRole === 'Admin' || role === 'Admin')) {
+      if (!isSystemAdmin(req.user!.role) && (isSystemAdmin(existingRole) || isSystemAdmin(role))) {
         res.status(403).json({ ok: false, error: 'Only a System Administrator can modify System Administrator accounts.' });
         return;
       }
@@ -798,7 +800,7 @@ export function createApiRouter(): express.Router {
       }
       const store = getStore();
       const target = await store.findUserById(userId);
-      if (target && normalizeUserRole(target.Role) === 'Admin' && !isSystemAdmin(req.user!.role)) {
+      if (target && isSystemAdmin(normalizeUserRole(target.Role)) && !isSystemAdmin(req.user!.role)) {
         res.status(403).json({ ok: false, error: 'Only a System Administrator can lock or unlock System Administrator accounts.' });
         return;
       }
@@ -820,7 +822,7 @@ export function createApiRouter(): express.Router {
       const users = await getStore().listUsers();
       res.json(
         users
-          .filter((u) => normalizeUserRole(u.Role) === 'Employee' && u.Status === 'Active')
+          .filter((u) => isProcessOwner(normalizeUserRole(u.Role)) && u.Status === 'Active')
           .map((u) => ({ userId: u.UserID, name: u.Name, department: u.Department }))
           .sort((a, b) => a.name.localeCompare(b.name))
       );
@@ -874,7 +876,8 @@ export function createApiRouter(): express.Router {
     try {
       const store = getStore();
       const all = await store.listCARs();
-      if (isAuditorOrAdmin(req.user!.role)) {
+      const departmentOnly = String(req.query.scope || '').toLowerCase() === 'department';
+      if (!departmentOnly && isAuditorOrAdmin(req.user!.role)) {
         res.json(all);
         return;
       }
@@ -1046,7 +1049,11 @@ export function createApiRouter(): express.Router {
         res.json({ ok: false, error: 'Record not found.' });
         return;
       }
-      const isAdmin = isAuditorOrAdmin(req.user!.role);
+      const payload: Record<string, unknown> = { ...(req.body || {}) };
+      const submitAs = String(payload.submitAs || '').toLowerCase();
+      delete payload.submitAs;
+      const isAdmin =
+        isAuditorOrAdmin(req.user!.role) && !(isProcessOwner(req.user!.role) && submitAs === 'owner');
       if (!isAdmin) {
         const freshUser = await store.findUserById(req.user!.userId);
         const userDept = freshUser ? freshUser.Department : req.user!.department;
@@ -1060,7 +1067,6 @@ export function createApiRouter(): express.Router {
         }
       }
 
-      const payload: Record<string, unknown> = { ...(req.body || {}) };
       const hasWhyFactors = payload.RootCauseFactors !== undefined;
       const whyFactors = hasWhyFactors ? parseWhyFactors(payload.RootCauseFactors) : undefined;
       delete payload.RootCauseFactors;

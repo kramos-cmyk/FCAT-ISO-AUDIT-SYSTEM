@@ -162,7 +162,8 @@ export const api = {
     ),
 
   // CARs
-  listCARs: () => request<CarRecord[]>('/cars'),
+  listCARs: (scope?: 'all' | 'department') =>
+    request<CarRecord[]>(scope === 'department' ? '/cars?scope=department' : '/cars'),
   getCAR: (carNo: string) => request<CarRecord | null>(`/cars/${encodeURIComponent(carNo)}`),
   submitCAR: (payload: Record<string, unknown>) =>
     request<{ ok: boolean; carNo?: string; error?: string }>('/cars', {

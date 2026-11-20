@@ -200,7 +200,7 @@ export function getDepartmentVisual(department?: string, role?: string): DeptVis
       label: name,
     };
   }
-  if (role === 'Admin') {
+  if (role === 'Admin' || role === 'Admin+Employee') {
     return {
       icon: ShieldCheck,
       bg: 'bg-[#FBF3DB]',
@@ -209,7 +209,7 @@ export function getDepartmentVisual(department?: string, role?: string): DeptVis
       label: 'System Administrator',
     };
   }
-  if (role === 'Auditor') {
+  if (role === 'Auditor' || role === 'Auditor+Employee') {
     return {
       icon: ClipboardCheck,
       bg: 'bg-[#F7ECEC]',

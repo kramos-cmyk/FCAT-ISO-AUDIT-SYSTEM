@@ -2,16 +2,22 @@ import type { CarRecord, CorrectionEntry, CorrectiveActionEntry, FollowUpEntry }
 
 export function roleLabel(role: string): string {
   if (role === 'Admin') return 'System Administrator';
+  if (role === 'Admin+Employee') return 'System Admin & Process Owner';
+  if (role === 'Auditor+Employee') return 'Auditor & Process Owner';
   if (role === 'Auditor') return 'Auditor Account';
   return 'Process Owner';
 }
 
 export function isAuditorRole(role: string | undefined): boolean {
-  return role === 'Admin' || role === 'Auditor';
+  return role === 'Admin' || role === 'Admin+Employee' || role === 'Auditor' || role === 'Auditor+Employee';
 }
 
 export function isSystemAdminRole(role: string | undefined): boolean {
-  return role === 'Admin';
+  return role === 'Admin' || role === 'Admin+Employee';
+}
+
+export function isProcessOwnerRole(role: string | undefined): boolean {
+  return role === 'Employee' || role === 'Auditor+Employee' || role === 'Admin+Employee';
 }
 
 export function safeUrl(url: string | undefined | null): string {

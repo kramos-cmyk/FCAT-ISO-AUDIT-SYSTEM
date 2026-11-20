@@ -22,7 +22,7 @@ export function EmployeeDashboardPage({
 
   useEffect(() => {
     api
-      .listCARs()
+      .listCARs('department')
       .then((rows) => setRecords(rows || []))
       .catch((err) => showToast(err.message || 'Could not load department records.', 'error'))
       .finally(() => setLoading(false));

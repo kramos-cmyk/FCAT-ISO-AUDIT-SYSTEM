@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { api } from '../lib/api';
-import { isSystemAdminRole, roleLabel } from '../lib/format';
+import { isAuditorRole, isProcessOwnerRole, isSystemAdminRole, roleLabel } from '../lib/format';
 import type { ManagedUser, SessionUser, UserRole } from '../lib/types';
 import { StatusLabel } from '../components/StatusLabel';
 import { useToast } from '../components/Toast';
@@ -46,26 +46,54 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
 
   const kpis = useMemo(() => {
     const total = users.length;
-    const admins = users.filter((u) => u.role === 'Admin' || u.role === 'Auditor').length;
-    const employees = users.filter((u) => u.role === 'Employee').length;
+    const admins = users.filter((u) => isAuditorRole(u.role)).length;
+    const employees = users.filter((u) => isProcessOwnerRole(u.role)).length;
+    const dual = users.filter((u) => isAuditorRole(u.role) && isProcessOwnerRole(u.role)).length;
     const locked = users.filter((u) => u.status === 'Locked').length;
-    return { total, admins, employees, locked };
+    return { total, admins, employees, dual, locked };
   }, [users]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
-      if (roleFilter && u.role !== roleFilter) return false;
+      if (roleFilter === 'Auditor') {
+        if (!isAuditorRole(u.role)) return false;
+      } else if (roleFilter === 'Employee') {
+        if (!isProcessOwnerRole(u.role)) return false;
+      } else if (roleFilter && u.role !== roleFilter) {
+        return false;
+      }
       if (q) {
         return (
           u.name.toLowerCase().includes(q) ||
           u.email.toLowerCase().includes(q) ||
-          u.department.toLowerCase().includes(q)
+          u.department.toLowerCase().includes(q) ||
+          roleLabel(u.role).toLowerCase().includes(q)
         );
       }
       return true;
     });
   }, [users, roleFilter, search]);
+
+  const [roleAuditor, setRoleAuditor] = useState(false);
+  const [roleOwner, setRoleOwner] = useState(true);
+  const [roleSysAdmin, setRoleSysAdmin] = useState(false);
+  const [roleError, setRoleError] = useState('');
+
+  const syncRoleCheckboxes = (r: UserRole) => {
+    setRoleSysAdmin(isSystemAdminRole(r));
+    setRoleAuditor(r === 'Auditor' || r === 'Auditor+Employee');
+    setRoleOwner(isProcessOwnerRole(r));
+    setRoleError('');
+  };
+
+  const computeRoleFromCheckboxes = (sysAdmin: boolean, auditor: boolean, owner: boolean): UserRole | null => {
+    if (sysAdmin) return owner ? 'Admin+Employee' : 'Admin';
+    if (auditor && owner) return 'Auditor+Employee';
+    if (auditor) return 'Auditor';
+    if (owner) return 'Employee';
+    return null;
+  };
 
   const openModal = (u?: ManagedUser) => {
     setEditingUser(u || null);
@@ -73,7 +101,9 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
     setEmail(u ? u.email : '');
     setPassword('');
     setPosition(u ? u.position || '' : '');
-    setRole(u ? u.role : 'Employee');
+    const initialRole: UserRole = u ? u.role : 'Employee';
+    setRole(initialRole);
+    syncRoleCheckboxes(initialRole);
     setSelectedDepts(
       u
         ? u.department
@@ -105,6 +135,11 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
 
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    const resolvedRole = computeRoleFromCheckboxes(roleSysAdmin, roleAuditor, roleOwner);
+    if (!resolvedRole) {
+      setRoleError('Select at least one role.');
+      return;
+    }
     if (selectedDepts.length === 0) {
       setDeptError('Select at least one department.');
       return;
@@ -130,7 +165,7 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
           email: email.trim(),
           departments: selectedDepts,
           position: position.trim(),
-          role,
+          role: resolvedRole,
           password: password || undefined,
         });
         if (!res.ok) {
@@ -148,7 +183,7 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
           password,
           departments: selectedDepts,
           position: position.trim(),
-          role,
+          role: resolvedRole,
         });
         if (!res.ok) {
           showToast(res.error || 'Could not create user.', 'error');
@@ -198,7 +233,9 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
           </div>
           <div className="border border-[#EAD9D4] border-t-2 border-t-[#2F6D39] rounded-lg p-4">
             <div className="text-2xl font-extrabold font-mono-tabular text-[#2F6D39]">{kpis.employees}</div>
-            <div className="text-[11px] uppercase tracking-wider text-[#7A6F6F] mt-1">Process Owners</div>
+            <div className="text-[11px] uppercase tracking-wider text-[#7A6F6F] mt-1">
+              Process Owners{kpis.dual > 0 ? ` (${kpis.dual} dual-role)` : ''}
+            </div>
           </div>
           <div
             className={`border border-[#EAD9D4] border-t-2 ${
@@ -229,8 +266,10 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
             >
               <option value="">All roles</option>
               <option value="Admin">System Administrator</option>
-              <option value="Auditor">Auditor Account</option>
-              <option value="Employee">Process Owner</option>
+              <option value="Auditor">Auditor (incl. Dual-Role)</option>
+              <option value="Auditor+Employee">Auditor &amp; Process Owner</option>
+              <option value="Employee">Process Owner (incl. Dual-Role)</option>
+              <option value="Admin+Employee">System Admin &amp; Process Owner</option>
             </select>
             <div className="relative">
               <Search className="h-4 w-4 text-[#7A6F6F] absolute left-3 top-1/2 -translate-y-1/2" />
@@ -274,17 +313,23 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
               <tbody className="divide-y divide-[#F0E4DF]">
                 {filtered.map((u) => {
                   const isSelf = u.userId === currentUser.userId;
-                  const targetRestricted = !isSysAdmin && u.role === 'Admin';
+                  const targetRestricted = !isSysAdmin && isSystemAdminRole(u.role);
                   return (
                     <tr key={u.userId} className="hover:bg-[#FCF6F3]">
                       <td className="py-3 pr-3 font-medium">{u.name}</td>
                       <td className="py-3 pr-3">{u.email}</td>
                       <td className="py-3 pr-3">
-                        {u.role === 'Admin' || u.role === 'Auditor' ? (
-                          <StatusLabel status={roleLabel(u.role)} />
-                        ) : (
-                          'Process Owner'
-                        )}
+                        <div className="flex flex-wrap items-center gap-1">
+                          {isSystemAdminRole(u.role) && <StatusLabel status="System Administrator" />}
+                          {(u.role === 'Auditor' || u.role === 'Auditor+Employee') && (
+                            <StatusLabel status="Auditor Account" />
+                          )}
+                          {isProcessOwnerRole(u.role) && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-[#E9F4EC] text-[#255A2D] border border-[#C5E0CB]">
+                              Process Owner
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3 pr-3">{u.department}</td>
                       <td className="py-3 pr-3">{u.position || <span className="text-[#7A6F6F]">—</span>}</td>
@@ -427,17 +472,87 @@ export function UsersPage({ currentUser }: { currentUser: SessionUser }) {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-[#4A1219] mb-1">Role</label>
-                    <select
-                      value={role}
-                      disabled={Boolean(editingUser && editingUser.userId === currentUser.userId)}
-                      onChange={(e) => setRole(e.target.value as UserRole)}
-                      className="w-full rounded-lg border border-[#EAD9D4] px-3 py-2 text-sm bg-white disabled:bg-[#F8F4F0] focus:outline-none focus:border-[#6B1A25]"
+                    <label className="block text-xs font-semibold text-[#4A1219] mb-1.5">
+                      Account Role(s) <span className="text-[#A32424]">*</span>
+                    </label>
+                    <div
+                      className={`border border-[#EAD9D4] rounded-lg p-2.5 space-y-2 ${
+                        editingUser && editingUser.userId === currentUser.userId ? 'bg-[#F8F4F0] opacity-75' : 'bg-white'
+                      }`}
                     >
-                      <option value="Employee">Process Owner</option>
-                      <option value="Auditor">Auditor Account</option>
-                      {isSysAdmin && <option value="Admin">System Administrator</option>}
-                    </select>
+                      <label className="flex items-start gap-2 text-xs text-[#2B2323] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          disabled={Boolean(editingUser && editingUser.userId === currentUser.userId)}
+                          checked={roleOwner}
+                          onChange={(e) => {
+                            const next = e.target.checked;
+                            setRoleOwner(next);
+                            setRoleError('');
+                            const r = computeRoleFromCheckboxes(roleSysAdmin, roleAuditor, next);
+                            if (r) setRole(r);
+                          }}
+                          className="mt-0.5 rounded border-[#EAD9D4] accent-[#6B1A25]"
+                        />
+                        <span>
+                          <strong className="text-[#4A1219]">Process Owner</strong>
+                          <span className="block text-[11px] text-[#7A6F6F]">
+                            Receives &amp; responds to CARs for their department(s).
+                          </span>
+                        </span>
+                      </label>
+
+                      <label className="flex items-start gap-2 text-xs text-[#2B2323] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          disabled={Boolean(editingUser && editingUser.userId === currentUser.userId) || roleSysAdmin}
+                          checked={roleAuditor || roleSysAdmin}
+                          onChange={(e) => {
+                            const next = e.target.checked;
+                            setRoleAuditor(next);
+                            setRoleError('');
+                            const r = computeRoleFromCheckboxes(roleSysAdmin, next, roleOwner);
+                            if (r) setRole(r);
+                          }}
+                          className="mt-0.5 rounded border-[#EAD9D4] accent-[#6B1A25]"
+                        />
+                        <span>
+                          <strong className="text-[#4A1219]">Auditor Account</strong>
+                          <span className="block text-[11px] text-[#7A6F6F]">
+                            Audits other departments, raises CARs &amp; manages schedules.
+                          </span>
+                        </span>
+                      </label>
+
+                      {isSysAdmin && (
+                        <label className="flex items-start gap-2 text-xs text-[#2B2323] cursor-pointer pt-1 border-t border-[#F0E4DF]">
+                          <input
+                            type="checkbox"
+                            disabled={Boolean(editingUser && editingUser.userId === currentUser.userId)}
+                            checked={roleSysAdmin}
+                            onChange={(e) => {
+                              const next = e.target.checked;
+                              setRoleSysAdmin(next);
+                              if (next) setRoleAuditor(false);
+                              setRoleError('');
+                              const r = computeRoleFromCheckboxes(next, next ? false : roleAuditor, roleOwner);
+                              if (r) setRole(r);
+                            }}
+                            className="mt-0.5 rounded border-[#EAD9D4] accent-[#6B1A25]"
+                          />
+                          <span>
+                            <strong className="text-[#4A1219]">System Administrator</strong>
+                            <span className="block text-[11px] text-[#7A6F6F]">
+                              Includes Auditor rights plus Company Details &amp; Email settings.
+                            </span>
+                          </span>
+                        </label>
+                      )}
+                    </div>
+                    {roleError && <div className="text-xs text-[#A32424] mt-1">{roleError}</div>}
+                    <div className="text-[11px] text-[#7A6F6F] mt-1">
+                      Assigned: <strong className="text-[#4A1219]">{roleLabel(role)}</strong>
+                    </div>
                   </div>
                 </div>
               </div>
