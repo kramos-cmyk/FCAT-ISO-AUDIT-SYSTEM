@@ -167,10 +167,10 @@ async function dispatchNotificationEmail(notif: NotificationRecord): Promise<voi
     if (!recipient || recipient.Status !== 'Active' || !recipient.Email) return;
 
     const settings = await store.getSettings();
-    if (settings[`NotifyEmail_${recipient.UserID}`] === 'false') return;
+    if (settings.AutoEmailEnabled === 'false') return;
     if (
       notif.Message.toLowerCase().includes('needs attention') &&
-      settings[`NotifyOnFlag_${recipient.UserID}`] === 'false'
+      settings.AutoEmailOnFlag === 'false'
     ) {
       return;
     }
@@ -211,12 +211,13 @@ async function dispatchAnnouncementEmails(announcement: {
       store.getCompanyDetails().catch(() => ({}) as Record<string, string>),
     ]);
 
+    if (settings.AutoEmailEnabled === 'false') return;
+
     const seenEmails = new Set<string>();
     const targets = users.filter((u) => {
       if (u.Status !== 'Active') return false;
       const email = String(u.Email || '').trim();
       if (!email || !email.includes('@')) return false;
-      if (settings[`NotifyEmail_${u.UserID}`] === 'false') return false;
       const key = email.toLowerCase();
       if (seenEmails.has(key)) return false;
       seenEmails.add(key);
@@ -287,7 +288,7 @@ async function flushConversationEmailBatch(mapKey: string): Promise<void> {
     if (!recipient || recipient.Status !== 'Active' || !recipient.Email) return;
 
     const settings = await store.getSettings();
-    if (settings[`NotifyEmail_${recipient.UserID}`] === 'false') return;
+    if (settings.AutoEmailEnabled === 'false') return;
 
     let messagesToSend = batch.messages;
 
@@ -1491,18 +1492,11 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.put('/settings', requireAuth, async (req: AuthedRequest, res) => {
+  router.put('/settings', requireSystemAdmin, async (req: AuthedRequest, res) => {
     try {
       const raw = (req.body || {}) as Record<string, unknown>;
       const updates: Record<string, string> = {};
-      const ownFlagKey = `NotifyOnFlag_${req.user!.userId}`;
-      const ownEmailKey = `NotifyEmail_${req.user!.userId}`;
-      if (req.user!.role === 'Admin') {
-        for (const [k, v] of Object.entries(raw)) updates[k] = String(v ?? '');
-      } else {
-        if (raw[ownFlagKey] !== undefined) updates[ownFlagKey] = String(raw[ownFlagKey]);
-        if (raw[ownEmailKey] !== undefined) updates[ownEmailKey] = String(raw[ownEmailKey]);
-      }
+      for (const [k, v] of Object.entries(raw)) updates[k] = String(v ?? '');
       const store = getStore();
       await store.updateSettings(updates);
       await store.appendLog({
@@ -1517,11 +1511,11 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.get('/settings/email-status', requireAuth, async (_req, res) => {
+  router.get('/settings/email-status', requireSystemAdmin, async (_req, res) => {
     res.json({ ok: true, ...getEmailSummary() });
   });
 
-  router.post('/settings/test-email', requireAuth, async (req: AuthedRequest, res) => {
+  router.post('/settings/test-email', requireSystemAdmin, async (req: AuthedRequest, res) => {
     try {
       if (!isEmailConfigured()) {
         res.json({
@@ -1661,6 +1655,23 @@ export function createApiRouter(): express.Router {
       const store = getStore();
       await store.createAnnouncement(item);
       await store.appendLog({ Timestamp: now, UserID: req.user!.userId, Action: 'CREATE_ANNOUNCEMENT', Details: title });
+
+      const activeUsers = (await store.listUsers()).filter((u) => u.Status === 'Active');
+      for (const u of activeUsers) {
+        await createAndPushNotification(
+          {
+            NotificationID: newId('N'),
+            ToUserID: u.UserID,
+            FromUserID: req.user!.userId,
+            Message: `New announcement from ${req.user!.name}: ${title}`,
+            RelatedCARNo: `ANN:${item.AnnouncementID}`,
+            Read: false,
+            CreatedAt: now,
+          },
+          { skipImmediateEmail: true }
+        );
+      }
+
       void dispatchAnnouncementEmails(item);
       res.json({ ok: true, announcement: item });
     } catch (err) {

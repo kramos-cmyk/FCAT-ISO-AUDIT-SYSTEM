@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import { roleLabel } from '../lib/format';
+import { isSystemAdminRole, roleLabel } from '../lib/format';
 import type { SessionUser } from '../lib/types';
 import type { AppPage } from '../components/Layout';
 import { useToast } from '../components/Toast';
@@ -13,22 +13,25 @@ export function SettingsPage({
   onNavigate: (page: AppPage) => void;
 }) {
   const { showToast } = useToast();
-  const [notifyEmail, setNotifyEmail] = useState('true');
-  const [notifyOnFlag, setNotifyOnFlag] = useState('true');
+  const isAdmin = isSystemAdminRole(user.role);
+  const [autoEmailEnabled, setAutoEmailEnabled] = useState('true');
+  const [autoEmailOnFlag, setAutoEmailOnFlag] = useState('true');
   const [emailConfigured, setEmailConfigured] = useState<boolean | null>(null);
   const [emailFrom, setEmailFrom] = useState('');
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(!isAdmin);
   const [saving, setSaving] = useState(false);
   const [sendingTest, setSendingTest] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
+    if (!isAdmin) {
+      setLoaded(true);
+      return;
+    }
     Promise.all([api.getSettings(), api.getEmailStatus().catch(() => null)])
       .then(([s, emailStatus]) => {
-        const flagKey = `NotifyOnFlag_${user.userId}`;
-        const emailKey = `NotifyEmail_${user.userId}`;
-        if (s && s[flagKey] !== undefined) setNotifyOnFlag(String(s[flagKey]));
-        if (s && s[emailKey] !== undefined) setNotifyEmail(String(s[emailKey]));
+        if (s && s.AutoEmailEnabled !== undefined) setAutoEmailEnabled(String(s.AutoEmailEnabled));
+        if (s && s.AutoEmailOnFlag !== undefined) setAutoEmailOnFlag(String(s.AutoEmailOnFlag));
         if (emailStatus) {
           setEmailConfigured(Boolean(emailStatus.configured));
           setEmailFrom(emailStatus.fromAddress || '');
@@ -36,20 +39,20 @@ export function SettingsPage({
         setLoaded(true);
       })
       .catch(() => {
-        showToast('Could not load your settings. Please refresh the page.', 'error');
+        showToast('Could not load settings. Please refresh the page.', 'error');
       });
-  }, [user.userId, showToast]);
+  }, [isAdmin, showToast]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loaded || saving) return;
+    if (!isAdmin || !loaded || saving) return;
     setSaving(true);
     try {
-      const updates: Record<string, string> = {};
-      updates[`NotifyEmail_${user.userId}`] = notifyEmail;
-      updates[`NotifyOnFlag_${user.userId}`] = notifyOnFlag;
-      await api.updateSettings(updates);
-      showToast('Settings saved.', 'success');
+      await api.updateSettings({
+        AutoEmailEnabled: autoEmailEnabled,
+        AutoEmailOnFlag: autoEmailOnFlag,
+      });
+      showToast('Auto-email settings saved.', 'success');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Could not save settings.', 'error');
     } finally {
@@ -58,6 +61,7 @@ export function SettingsPage({
   };
 
   const handleSendTestEmail = async () => {
+    if (!isAdmin) return;
     setSendingTest(true);
     setTestResult(null);
     try {
@@ -82,101 +86,102 @@ export function SettingsPage({
 
   return (
     <div className="space-y-6">
-      <div className="bg-white border border-[#EAD9D4] rounded-xl p-5 sm:p-6 shadow-sm">
-        <h1 className="text-2xl font-bold text-[#4A1219] m-0">Settings</h1>
-        <form onSubmit={handleSave} className="space-y-4 mt-4 max-w-lg">
-          <div>
-            <label className="block text-xs font-semibold text-[#4A1219] mb-1">Full Name</label>
-            <input
-              type="text"
-              disabled
-              value={user.name || ''}
-              className="w-full rounded-lg border border-[#EAD9D4] bg-[#F8F4F0] px-3 py-2 text-sm text-[#7A6F6F]"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-[#4A1219] mb-1">
-              Auto-send email for notifications (Announcements, Concerns &amp; Tickets, CAR updates, Audit Schedules)
-            </label>
-            <select
-              disabled={!loaded}
-              value={notifyEmail}
-              onChange={(e) => setNotifyEmail(e.target.value)}
-              className="w-full rounded-lg border border-[#EAD9D4] px-3 py-2 text-sm bg-white disabled:bg-[#F8F4F0] focus:outline-none focus:border-[#6B1A25]"
-            >
-              <option value="true">Yes — automatically email my account ({user.email})</option>
-              <option value="false">No — in-app notifications only</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-[#4A1219] mb-1">
-              Notify me by email when a record is flagged
-            </label>
-            <select
-              disabled={!loaded}
-              value={notifyOnFlag}
-              onChange={(e) => setNotifyOnFlag(e.target.value)}
-              className="w-full rounded-lg border border-[#EAD9D4] px-3 py-2 text-sm bg-white disabled:bg-[#F8F4F0] focus:outline-none focus:border-[#6B1A25]"
-            >
-              <option value="true">Yes</option>
-              <option value="false">No</option>
-            </select>
-          </div>
-
-          {emailConfigured !== null && (
-            <div className="rounded-lg border border-[#EAD9D4] bg-[#FCF6F3] px-3.5 py-2.5 text-xs text-[#4A1219] space-y-1">
-              {emailConfigured ? (
-                <p className="m-0">
-                  Automatic email delivery is active{emailFrom ? ` via ${emailFrom}` : ''}. Announcements, Concerns &amp; Tickets, Audit Schedules, and CAR actions (new, edited, flagged, deadline, follow-up, reopened, closed, comments) will be emailed to <strong>{user.email}</strong>. Private direct messages stay strictly in-app for DPO &amp; security privacy.
-                </p>
-              ) : (
-                <p className="m-0 text-[#7A6F6F]">
-                  To deliver emails externally, configure <span className="font-mono-tabular font-semibold">GOOGLE_MAIL_WEBHOOK_URL</span> (recommended for Render Free Tier) or{' '}
-                  <span className="font-mono-tabular font-semibold">SMTP_HOST</span>,{' '}
-                  <span className="font-mono-tabular font-semibold">SMTP_PORT</span>,{' '}
-                  <span className="font-mono-tabular font-semibold">SMTP_USER</span>, and{' '}
-                  <span className="font-mono-tabular font-semibold">SMTP_PASS</span> in your server environment variables.
-                </p>
-              )}
+      {isAdmin && (
+        <div className="bg-white border border-[#EAD9D4] rounded-xl p-5 sm:p-6 shadow-sm">
+          <h1 className="text-2xl font-bold text-[#4A1219] m-0">Settings</h1>
+          <form onSubmit={handleSave} className="space-y-4 mt-4 max-w-lg">
+            <div>
+              <label className="block text-xs font-semibold text-[#4A1219] mb-1">Full Name</label>
+              <input
+                type="text"
+                disabled
+                value={user.name || ''}
+                className="w-full rounded-lg border border-[#EAD9D4] bg-[#F8F4F0] px-3 py-2 text-sm text-[#7A6F6F]"
+              />
             </div>
-          )}
 
-          {testResult && (
-            <div
-              className={`rounded-lg border px-3.5 py-2.5 text-xs ${
-                testResult.ok
-                  ? 'bg-[#E9F4EC] border-[#C5E0CB] text-[#255A2D]'
-                  : 'bg-[#FDECEC] border-[#F4C2C2] text-[#A32424]'
-              }`}
-            >
-              {testResult.text}
+            <div>
+              <label className="block text-xs font-semibold text-[#4A1219] mb-1">
+                System Auto-Email Delivery (Announcements, Concerns &amp; Tickets, CAR updates, Audit Schedules)
+              </label>
+              <select
+                disabled={!loaded}
+                value={autoEmailEnabled}
+                onChange={(e) => setAutoEmailEnabled(e.target.value)}
+                className="w-full rounded-lg border border-[#EAD9D4] px-3 py-2 text-sm bg-white disabled:bg-[#F8F4F0] focus:outline-none focus:border-[#6B1A25]"
+              >
+                <option value="true">Enabled — automatically email active accounts</option>
+                <option value="false">Disabled — in-app notifications only</option>
+              </select>
             </div>
-          )}
 
-          <div className="flex flex-wrap items-center gap-2.5 pt-1">
-            <button
-              type="submit"
-              disabled={!loaded || saving}
-              className="px-5 py-2 text-sm font-semibold rounded-lg bg-[#6B1A25] hover:bg-[#4A1219] text-white cursor-pointer disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save Settings'}
-            </button>
-            <button
-              type="button"
-              disabled={!loaded || sendingTest}
-              onClick={handleSendTestEmail}
-              className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219] bg-white cursor-pointer disabled:opacity-50"
-            >
-              {sendingTest ? 'Sending...' : 'Send Test Email'}
-            </button>
-          </div>
-        </form>
-      </div>
+            <div>
+              <label className="block text-xs font-semibold text-[#4A1219] mb-1">
+                Send email when a CAR record is flagged (Needs Attention)
+              </label>
+              <select
+                disabled={!loaded}
+                value={autoEmailOnFlag}
+                onChange={(e) => setAutoEmailOnFlag(e.target.value)}
+                className="w-full rounded-lg border border-[#EAD9D4] px-3 py-2 text-sm bg-white disabled:bg-[#F8F4F0] focus:outline-none focus:border-[#6B1A25]"
+              >
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </div>
+
+            {emailConfigured !== null && (
+              <div className="rounded-lg border border-[#EAD9D4] bg-[#FCF6F3] px-3.5 py-2.5 text-xs text-[#4A1219] space-y-1">
+                {emailConfigured ? (
+                  <p className="m-0">
+                    Automatic email delivery is{' '}
+                    <strong>{autoEmailEnabled === 'false' ? 'paused by Admin' : 'active'}</strong>
+                    {emailFrom ? ` via ${emailFrom}` : ''}. Announcements, Concerns &amp; Tickets, Audit Schedules, and CAR actions (new, edited, flagged, deadline, follow-up, reopened, closed, comments) are emailed to active accounts. Private direct messages stay strictly in-app for DPO &amp; security privacy.
+                  </p>
+                ) : (
+                  <p className="m-0 text-[#7A6F6F]">
+                    To deliver emails externally, configure an email relay (e.g. <span className="font-mono-tabular font-semibold">BREVO_API_KEY</span> or{' '}
+                    <span className="font-mono-tabular font-semibold">SMTP_HOST</span>) in your server environment variables.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {testResult && (
+              <div
+                className={`rounded-lg border px-3.5 py-2.5 text-xs ${
+                  testResult.ok
+                    ? 'bg-[#E9F4EC] border-[#C5E0CB] text-[#255A2D]'
+                    : 'bg-[#FDECEC] border-[#F4C2C2] text-[#A32424]'
+                }`}
+              >
+                {testResult.text}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2.5 pt-1">
+              <button
+                type="submit"
+                disabled={!loaded || saving}
+                className="px-5 py-2 text-sm font-semibold rounded-lg bg-[#6B1A25] hover:bg-[#4A1219] text-white cursor-pointer disabled:opacity-50"
+              >
+                {saving ? 'Saving...' : 'Save Settings'}
+              </button>
+              <button
+                type="button"
+                disabled={!loaded || sendingTest}
+                onClick={handleSendTestEmail}
+                className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219] bg-white cursor-pointer disabled:opacity-50"
+              >
+                {sendingTest ? 'Sending...' : 'Send Test Email'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <div className="bg-white border border-[#EAD9D4] rounded-xl p-5 sm:p-6 shadow-sm">
-        <h2 className="text-lg font-bold text-[#4A1219] m-0">Account</h2>
+        <h2 className={`${isAdmin ? 'text-lg' : 'text-2xl'} font-bold text-[#4A1219] m-0`}>Account</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
           <div>
             <label className="block text-xs font-semibold text-[#4A1219] mb-1">Email</label>

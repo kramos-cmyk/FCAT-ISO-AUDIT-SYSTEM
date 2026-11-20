@@ -3,6 +3,7 @@ import {
   BarChart3,
   Bell,
   Building2,
+  Calendar,
   CheckCheck,
   ClipboardList,
   FilePlus2,
@@ -11,6 +12,7 @@ import {
   LogOut,
   Megaphone,
   Menu,
+  MessageSquare,
   Settings,
   UserCircle,
   Users,
@@ -159,7 +161,11 @@ export function Layout({
     }
     setNotifOpen(false);
     const ref = String(n.RelatedCARNo || '').trim();
-    if (ref.startsWith('HELP:')) {
+    if (ref.startsWith('ANN:')) {
+      onNavigate('announcements');
+    } else if (ref.startsWith('AUDIT:')) {
+      onNavigate(isAuditorRole(user.role) ? 'admin' : 'employee');
+    } else if (ref.startsWith('HELP:')) {
       const ticketId = ref.slice(5);
       if (onOpenHelpDesk) onOpenHelpDesk('tickets', ticketId);
       else onNavigate('helpdesk');
@@ -257,30 +263,45 @@ export function Layout({
                       You have no notifications yet.
                     </div>
                   ) : (
-                    notifications.slice(0, 25).map((n) => (
-                      <button
-                        key={n.NotificationID}
-                        type="button"
-                        onClick={() => handleNotificationClick(n)}
-                        className={`w-full text-left px-4 py-3 hover:bg-[#FCF6F3] transition-colors cursor-pointer flex items-start gap-2.5 ${
-                          n.Read ? 'bg-white' : 'bg-[#FBF4F2]'
-                        }`}
-                      >
-                        <span
-                          className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${
-                            n.Read ? 'bg-transparent' : 'bg-[#6B1A25]'
+                    notifications.slice(0, 25).map((n) => {
+                      const ref = String(n.RelatedCARNo || '').trim();
+                      const NotifIcon = ref.startsWith('ANN:')
+                        ? Megaphone
+                        : ref.startsWith('AUDIT:')
+                          ? Calendar
+                          : ref.startsWith('HELP:')
+                            ? LifeBuoy
+                            : ref.startsWith('DM:')
+                              ? MessageSquare
+                              : ClipboardList;
+                      return (
+                        <button
+                          key={n.NotificationID}
+                          type="button"
+                          onClick={() => handleNotificationClick(n)}
+                          className={`w-full text-left px-4 py-3 hover:bg-[#FCF6F3] transition-colors cursor-pointer flex items-start gap-2.5 ${
+                            n.Read ? 'bg-white' : 'bg-[#FBF4F2]'
                           }`}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className={`text-xs leading-relaxed ${n.Read ? 'text-[#574D4D]' : 'text-[#2B2323] font-semibold'}`}>
-                            {n.Message}
+                        >
+                          <div className="mt-0.5 flex items-center gap-1.5 shrink-0">
+                            <span
+                              className={`h-2 w-2 rounded-full ${
+                                n.Read ? 'bg-transparent' : 'bg-[#6B1A25]'
+                              }`}
+                            />
+                            <NotifIcon className={`h-3.5 w-3.5 ${n.Read ? 'text-[#8C8080]' : 'text-[#6B1A25]'}`} />
                           </div>
-                          <div className="text-[11px] text-[#7A6F6F] mt-1 font-mono-tabular">
-                            {fmtDateTime(n.CreatedAt)}
+                          <div className="min-w-0 flex-1">
+                            <div className={`text-xs leading-relaxed ${n.Read ? 'text-[#574D4D]' : 'text-[#2B2323] font-semibold'}`}>
+                              {n.Message}
+                            </div>
+                            <div className="text-[11px] text-[#7A6F6F] mt-1 font-mono-tabular">
+                              {fmtDateTime(n.CreatedAt)}
+                            </div>
                           </div>
-                        </div>
-                      </button>
-                    ))
+                        </button>
+                      );
+                    })
                   )}
                 </div>
               </div>
