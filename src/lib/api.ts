@@ -3,6 +3,9 @@ import type {
   AnnouncementHistoryItem,
   AnnouncementItem,
   AuditLogItem,
+  AuditSchedule,
+  AuditScheduleStatus,
+  AuditScheduleType,
   CarComment,
   CarRecord,
   DirectMessage,
@@ -273,6 +276,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(updates),
     }),
+  getEmailStatus: () =>
+    request<{ ok: boolean; configured: boolean; fromAddress: string; host: string }>('/settings/email-status'),
+  sendTestEmail: () =>
+    request<{ ok: boolean; toEmail?: string; error?: string }>('/settings/test-email', {
+      method: 'POST',
+    }),
 
   // Uploads
   uploadEvidence: (carNo: string, file: File) => {
@@ -406,4 +415,44 @@ export const api = {
         body: JSON.stringify({ message }),
       }
     ),
+
+  // Audit Schedules
+  listAuditSchedules: () => request<AuditSchedule[]>('/audit-schedules'),
+  createAuditSchedule: (data: {
+    Title: string;
+    AuditType: AuditScheduleType;
+    AuditDate: string;
+    TimeWindow?: string;
+    Department?: string;
+    LeadAuditor?: string;
+    Notes?: string;
+  }) =>
+    request<{ ok: boolean; schedule?: AuditSchedule; error?: string }>('/audit-schedules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateAuditSchedule: (
+    scheduleId: string,
+    updates: Partial<{
+      Title: string;
+      AuditType: AuditScheduleType;
+      AuditDate: string;
+      TimeWindow: string;
+      Department: string;
+      LeadAuditor: string;
+      Status: AuditScheduleStatus;
+      Notes: string;
+    }>
+  ) =>
+    request<{ ok: boolean; schedule?: AuditSchedule; error?: string }>(
+      `/audit-schedules/${encodeURIComponent(scheduleId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(updates),
+      }
+    ),
+  deleteAuditSchedule: (scheduleId: string) =>
+    request<{ ok: boolean; error?: string }>(`/audit-schedules/${encodeURIComponent(scheduleId)}`, {
+      method: 'DELETE',
+    }),
 };

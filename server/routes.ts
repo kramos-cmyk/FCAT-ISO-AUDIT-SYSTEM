@@ -8,6 +8,7 @@ import {
   PROCESS_OWNER_REQUIRED_FIELDS,
   REQUIRED_FIELDS,
 } from './constants.js';
+import { getEmailSummary, isEmailConfigured, sendNotificationEmail } from './mailer.js';
 import { generateCarPdfBuffer } from './pdfExport.js';
 import { emitToUsers } from './realtime.js';
 import {
@@ -35,6 +36,9 @@ import {
   testGoogleSheetConnection,
 } from './storeManager.js';
 import type {
+  AuditSchedule,
+  AuditScheduleStatus,
+  AuditScheduleType,
   CarRecord,
   DirectMessage,
   HelpDeskMessage,
@@ -147,9 +151,46 @@ function userCanAccessCar(userId: string, userDept: string, rec: CarRecord): boo
   return false;
 }
 
+async function dispatchNotificationEmail(notif: NotificationRecord): Promise<void> {
+  if (!isEmailConfigured()) return;
+  try {
+    const store = getStore();
+    const recipient = await store.findUserById(notif.ToUserID);
+    if (!recipient || recipient.Status !== 'Active' || !recipient.Email) return;
+
+    const settings = await store.getSettings();
+    if (settings[`NotifyEmail_${recipient.UserID}`] === 'false') return;
+    if (
+      notif.Message.toLowerCase().includes('needs attention') &&
+      settings[`NotifyOnFlag_${recipient.UserID}`] === 'false'
+    ) {
+      return;
+    }
+
+    const [sender, company] = await Promise.all([
+      notif.FromUserID ? store.findUserById(notif.FromUserID).catch(() => null) : Promise.resolve(null),
+      store.getCompanyDetails().catch(() => ({}) as Record<string, string>),
+    ]);
+
+    const res = await sendNotificationEmail({
+      toEmail: recipient.Email,
+      toName: recipient.Name,
+      fromName: sender?.Name || '',
+      companyName: company.CompanyName || '',
+      notif,
+    });
+    if (!res.ok && !res.skipped) {
+      console.error(`[Mailer] Failed to send email to ${recipient.Email}:`, res.error);
+    }
+  } catch (err) {
+    console.error('[Mailer] Auto-email error:', err instanceof Error ? err.message : err);
+  }
+}
+
 async function createAndPushNotification(notif: NotificationRecord) {
   await getStore().createNotification(notif);
   emitToUsers([notif.ToUserID], { type: 'notification:new', payload: notif });
+  void dispatchNotificationEmail(notif);
 }
 
 async function notifyDepartment(
@@ -932,7 +973,7 @@ export function createApiRouter(): express.Router {
             CreatedAt: nowIso(),
           });
         } else {
-          await notifyDepartment(req.user!.userId, rec.Department, msg, carNo);
+          await notifyDepartment(req.user!.userId, [rec.Department, rec.EmployeeName], msg, carNo);
         }
       }
       await store.appendLog({
@@ -1158,11 +1199,13 @@ export function createApiRouter(): express.Router {
     try {
       const raw = (req.body || {}) as Record<string, unknown>;
       const updates: Record<string, string> = {};
-      const ownKey = `NotifyOnFlag_${req.user!.userId}`;
+      const ownFlagKey = `NotifyOnFlag_${req.user!.userId}`;
+      const ownEmailKey = `NotifyEmail_${req.user!.userId}`;
       if (req.user!.role === 'Admin') {
         for (const [k, v] of Object.entries(raw)) updates[k] = String(v ?? '');
-      } else if (raw[ownKey] !== undefined) {
-        updates[ownKey] = String(raw[ownKey]);
+      } else {
+        if (raw[ownFlagKey] !== undefined) updates[ownFlagKey] = String(raw[ownFlagKey]);
+        if (raw[ownEmailKey] !== undefined) updates[ownEmailKey] = String(raw[ownEmailKey]);
       }
       const store = getStore();
       await store.updateSettings(updates);
@@ -1175,6 +1218,51 @@ export function createApiRouter(): express.Router {
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to save settings.' });
+    }
+  });
+
+  router.get('/settings/email-status', requireAuth, async (_req, res) => {
+    res.json({ ok: true, ...getEmailSummary() });
+  });
+
+  router.post('/settings/test-email', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      if (!isEmailConfigured()) {
+        res.json({
+          ok: false,
+          error:
+            'Automatic email is not configured on the server yet. Set SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASS environment variables on your host.',
+        });
+        return;
+      }
+      const store = getStore();
+      const user = await store.findUserById(req.user!.userId);
+      const company = await store.getCompanyDetails().catch(() => ({}) as Record<string, string>);
+      const toEmail = user?.Email || req.user!.email;
+      const toName = user?.Name || req.user!.name;
+
+      const result = await sendNotificationEmail({
+        toEmail,
+        toName,
+        fromName: 'FCAT ISO Audit System',
+        companyName: company.CompanyName || '',
+        notif: {
+          NotificationID: newId('TEST'),
+          ToUserID: req.user!.userId,
+          FromUserID: req.user!.userId,
+          Message: 'This is a test notification email confirming that automatic email alerts are working.',
+          RelatedCARNo: '',
+          Read: false,
+          CreatedAt: nowIso(),
+        },
+      });
+      if (!result.ok) {
+        res.json({ ok: false, error: result.error || 'Could not send test email.' });
+        return;
+      }
+      res.json({ ok: true, toEmail });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to send test email.' });
     }
   });
 
@@ -1860,6 +1948,154 @@ export function createApiRouter(): express.Router {
       res.json({ ok: true, message: msg });
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to send message.' });
+    }
+  });
+
+  // ---- AUDIT SCHEDULES (Calendar) ----
+  const ALLOWED_AUDIT_TYPES: AuditScheduleType[] = [
+    'Internal ISO Audit',
+    'Department Audit',
+    'Follow-Up Verification',
+    'Surveillance Audit',
+    'Management Review',
+  ];
+  const ALLOWED_AUDIT_STATUSES: AuditScheduleStatus[] = ['Scheduled', 'Completed', 'Cancelled'];
+
+  router.get('/audit-schedules', requireAuditor, async (_req, res) => {
+    try {
+      res.json(await getStore().listAuditSchedules());
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load audit schedules.' });
+    }
+  });
+
+  router.post('/audit-schedules', requireAuditor, async (req: AuthedRequest, res) => {
+    try {
+      const title = String(req.body?.Title || '').trim().slice(0, 160);
+      const auditDate = String(req.body?.AuditDate || '').trim();
+      const rawType = String(req.body?.AuditType || 'Internal ISO Audit').trim() as AuditScheduleType;
+      const auditType: AuditScheduleType = ALLOWED_AUDIT_TYPES.includes(rawType) ? rawType : 'Internal ISO Audit';
+      const timeWindow = String(req.body?.TimeWindow || '').trim().slice(0, 80);
+      const department = String(req.body?.Department || '').trim().slice(0, 160);
+      const leadAuditor = String(req.body?.LeadAuditor || req.user!.name || '').trim().slice(0, 120);
+      const notes = String(req.body?.Notes || '').trim().slice(0, 1500);
+
+      if (!title) {
+        res.json({ ok: false, error: 'Audit title is required.' });
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(auditDate)) {
+        res.json({ ok: false, error: 'Please select a valid date (YYYY-MM-DD).' });
+        return;
+      }
+
+      const now = nowIso();
+      const item: AuditSchedule = {
+        ScheduleID: newId('AUD'),
+        Title: title,
+        AuditType: auditType,
+        AuditDate: auditDate,
+        TimeWindow: timeWindow,
+        Department: department || 'All Services',
+        LeadAuditor: leadAuditor,
+        Status: 'Scheduled',
+        Notes: notes,
+        CreatedBy: req.user!.userId,
+        CreatedAt: now,
+        UpdatedAt: now,
+      };
+      const store = getStore();
+      await store.createAuditSchedule(item);
+      await store.appendLog({
+        Timestamp: now,
+        UserID: req.user!.userId,
+        Action: 'SCHEDULE_AUDIT',
+        Details: `${item.ScheduleID}: ${item.Title} (${item.AuditDate})`,
+      });
+      res.json({ ok: true, schedule: item });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to create audit schedule.' });
+    }
+  });
+
+  router.put('/audit-schedules/:id', requireAuditor, async (req: AuthedRequest, res) => {
+    try {
+      const store = getStore();
+      const existing = await store.getAuditSchedule(req.params.id);
+      if (!existing) {
+        res.status(404).json({ ok: false, error: 'Audit schedule not found.' });
+        return;
+      }
+      const updates: Partial<AuditSchedule> = { UpdatedAt: nowIso() };
+      if (req.body?.Title !== undefined) {
+        const t = String(req.body.Title).trim().slice(0, 160);
+        if (!t) {
+          res.json({ ok: false, error: 'Audit title cannot be empty.' });
+          return;
+        }
+        updates.Title = t;
+      }
+      if (req.body?.AuditDate !== undefined) {
+        const d = String(req.body.AuditDate).trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+          res.json({ ok: false, error: 'Please select a valid date (YYYY-MM-DD).' });
+          return;
+        }
+        updates.AuditDate = d;
+      }
+      if (req.body?.AuditType !== undefined) {
+        const rawType = String(req.body.AuditType).trim() as AuditScheduleType;
+        if (ALLOWED_AUDIT_TYPES.includes(rawType)) updates.AuditType = rawType;
+      }
+      if (req.body?.TimeWindow !== undefined) {
+        updates.TimeWindow = String(req.body.TimeWindow).trim().slice(0, 80);
+      }
+      if (req.body?.Department !== undefined) {
+        updates.Department = String(req.body.Department).trim().slice(0, 160) || 'All Services';
+      }
+      if (req.body?.LeadAuditor !== undefined) {
+        updates.LeadAuditor = String(req.body.LeadAuditor).trim().slice(0, 120);
+      }
+      if (req.body?.Status !== undefined) {
+        const rawStatus = String(req.body.Status).trim() as AuditScheduleStatus;
+        if (ALLOWED_AUDIT_STATUSES.includes(rawStatus)) updates.Status = rawStatus;
+      }
+      if (req.body?.Notes !== undefined) {
+        updates.Notes = String(req.body.Notes).trim().slice(0, 1500);
+      }
+
+      await store.updateAuditSchedule(existing.ScheduleID, updates);
+      const updated = { ...existing, ...updates };
+      await store.appendLog({
+        Timestamp: nowIso(),
+        UserID: req.user!.userId,
+        Action: 'UPDATE_AUDIT_SCHEDULE',
+        Details: `${updated.ScheduleID}: ${updated.Title} (${updated.Status})`,
+      });
+      res.json({ ok: true, schedule: updated });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to update audit schedule.' });
+    }
+  });
+
+  router.delete('/audit-schedules/:id', requireAuditor, async (req: AuthedRequest, res) => {
+    try {
+      const store = getStore();
+      const existing = await store.getAuditSchedule(req.params.id);
+      if (!existing) {
+        res.status(404).json({ ok: false, error: 'Audit schedule not found.' });
+        return;
+      }
+      await store.deleteAuditSchedule(existing.ScheduleID);
+      await store.appendLog({
+        Timestamp: nowIso(),
+        UserID: req.user!.userId,
+        Action: 'DELETE_AUDIT_SCHEDULE',
+        Details: `${existing.ScheduleID}: ${existing.Title} (${existing.AuditDate})`,
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to delete audit schedule.' });
     }
   });
 

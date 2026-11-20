@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, ClipboardList, ExternalLink, History, Plus, RefreshCw, Search } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, ExternalLink, History, Plus, RefreshCw, Search } from 'lucide-react';
 import { api } from '../lib/api';
-import { evidenceLinksOf, fmtDate, fmtDateTime, isRecordOverdue, roleLabel, safeUrl } from '../lib/format';
-import type { AuditLogItem, CarRecord } from '../lib/types';
+import { evidenceLinksOf, fmtDate, fmtDateTime, isRecordOverdue, normalizeInputDate, roleLabel, safeUrl } from '../lib/format';
+import type { AuditLogItem, AuditSchedule, CarRecord } from '../lib/types';
+import { AuditCalendarView } from '../components/AuditCalendarView';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { StatusLabel } from '../components/StatusLabel';
 import { useToast } from '../components/Toast';
 
-type DashboardTab = 'submissions' | 'audit-trail';
+type DashboardTab = 'submissions' | 'calendar' | 'audit-trail';
 type AuditCategory = 'all' | 'auth' | 'submissions' | 'status' | 'users' | 'system';
 
 interface ActionMeta {
@@ -237,6 +238,27 @@ function describeAuditAction(action: string): ActionMeta {
         categoryLabel: 'Status Change',
         badgeClass: 'bg-[#FBF0D6] text-[#6E5200] border-[#E7CF86]',
       };
+    case 'SCHEDULE_AUDIT':
+      return {
+        label: 'Audit Scheduled',
+        category: 'system',
+        categoryLabel: 'Announcements & System',
+        badgeClass: 'bg-[#F9EAEA] text-[#6B1A25] border-[#E8C5C8]',
+      };
+    case 'UPDATE_AUDIT_SCHEDULE':
+      return {
+        label: 'Audit Schedule Updated',
+        category: 'system',
+        categoryLabel: 'Announcements & System',
+        badgeClass: 'bg-[#F4ECE9] text-[#4A1219] border-[#EAD9D4]',
+      };
+    case 'DELETE_AUDIT_SCHEDULE':
+      return {
+        label: 'Audit Schedule Removed',
+        category: 'system',
+        categoryLabel: 'Announcements & System',
+        badgeClass: 'bg-[#FDECEC] text-[#A32424] border-[#F4C2C2]',
+      };
     default:
       if (code.startsWith('SHEETS_SYNC_')) {
         return {
@@ -269,6 +291,7 @@ export function AdminDashboardPage({
 
   const [records, setRecords] = useState<CarRecord[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
+  const [auditSchedules, setAuditSchedules] = useState<AuditSchedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -308,9 +331,14 @@ export function AdminDashboardPage({
     setLoading(true);
     setError('');
     try {
-      const [cars, depts] = await Promise.all([api.listCARs(), api.getDepartments().catch(() => [])]);
+      const [cars, depts, schedules] = await Promise.all([
+        api.listCARs(),
+        api.getDepartments().catch(() => []),
+        api.listAuditSchedules().catch(() => []),
+      ]);
       setRecords(cars || []);
       setDepartments(depts || []);
+      setAuditSchedules(schedules || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load submissions.');
     } finally {
@@ -345,6 +373,17 @@ export function AdminDashboardPage({
   const deptOptions = useMemo(() => {
     return Array.from(new Set([...departments, ...records.map((r) => r.Department).filter(Boolean)])).sort();
   }, [departments, records]);
+
+  const calendarBadgeCount = useMemo(() => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const todayYmd = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const openDeadlines = records.filter((r) => r.Status !== 'Closed' && normalizeInputDate(r.AdminDeadline)).length;
+    const upcomingAudits = auditSchedules.filter(
+      (s) => s.Status === 'Scheduled' && normalizeInputDate(s.AuditDate) >= todayYmd
+    ).length;
+    return openDeadlines + upcomingAudits;
+  }, [records, auditSchedules]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -524,7 +563,7 @@ export function AdminDashboardPage({
         <button
           type="button"
           onClick={() => setActiveTab('submissions')}
-          className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors cursor-pointer -mb-px ${
+          className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors cursor-pointer -mb-px whitespace-nowrap shrink-0 ${
             activeTab === 'submissions'
               ? 'border-[#6B1A25] text-[#4A1219] bg-white rounded-t-lg'
               : 'border-transparent text-[#7A6F6F] hover:text-[#4A1219]'
@@ -539,8 +578,24 @@ export function AdminDashboardPage({
 
         <button
           type="button"
+          onClick={() => setActiveTab('calendar')}
+          className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors cursor-pointer -mb-px whitespace-nowrap shrink-0 ${
+            activeTab === 'calendar'
+              ? 'border-[#6B1A25] text-[#4A1219] bg-white rounded-t-lg'
+              : 'border-transparent text-[#7A6F6F] hover:text-[#4A1219]'
+          }`}
+        >
+          <CalendarDays className="h-4 w-4" />
+          Schedule &amp; Calendar
+          <span className="text-xs font-mono-tabular px-1.5 py-0.5 rounded bg-[#F4ECE9] text-[#4A1219]">
+            {calendarBadgeCount}
+          </span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab('audit-trail')}
-          className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors cursor-pointer -mb-px ${
+          className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors cursor-pointer -mb-px whitespace-nowrap shrink-0 ${
             activeTab === 'audit-trail'
               ? 'border-[#6B1A25] text-[#4A1219] bg-white rounded-t-lg'
               : 'border-transparent text-[#7A6F6F] hover:text-[#4A1219]'
@@ -756,6 +811,22 @@ export function AdminDashboardPage({
           </div>
         )}
       </div>
+      ) : activeTab === 'calendar' ? (
+      <AuditCalendarView
+        records={records}
+        schedules={auditSchedules}
+        departments={departments}
+        loading={loading}
+        error={error}
+        onReload={loadData}
+        onSchedulesChange={setAuditSchedules}
+        onViewCar={onViewCar}
+        onEditCar={onEditCar}
+        onSetDeadline={(carNo, currentDeadline) => {
+          setDeadlineCarNo(carNo);
+          setDeadlineDate(currentDeadline);
+        }}
+      />
       ) : (
       <div className="space-y-5">
         {/* Audit Trail Summary Tiles */}

@@ -4,6 +4,7 @@ import {
   ANNOUNCEMENT_COLS,
   ANNOUNCEMENT_COMMENT_COLS,
   ANNOUNCEMENT_HISTORY_COLS,
+  AUDIT_SCHEDULE_COLS,
   CAR_COLS,
   COMMENT_COLS,
   COMPANY_COLS,
@@ -28,6 +29,7 @@ import type {
   AnnouncementHistoryRecord,
   AnnouncementRecord,
   AuditLogEntry,
+  AuditSchedule,
   CarComment,
   CarRecord,
   DataStore,
@@ -171,6 +173,7 @@ export class GoogleSheetsStore implements DataStore {
     await this.ensureTab(SHEETS.HELPDESK_TICKETS, HELPDESK_TICKET_COLS);
     await this.ensureTab(SHEETS.HELPDESK_MESSAGES, HELPDESK_MESSAGE_COLS);
     await this.ensureTab(SHEETS.DIRECT_MESSAGES, DIRECT_MESSAGE_COLS);
+    await this.ensureTab(SHEETS.AUDIT_SCHEDULES, AUDIT_SCHEDULE_COLS);
 
     const deptRows = await this.getRowsRaw(SHEETS.DEPARTMENTS, true);
     const existingDepts = deptRows.slice(1).map((r) => String(r[0] || '').trim()).filter(Boolean);
@@ -791,6 +794,40 @@ export class GoogleSheetsStore implements DataStore {
         Read: 'TRUE',
       });
     }
+  }
+
+  // ---- Audit Schedules ----
+  async listAuditSchedules(): Promise<AuditSchedule[]> {
+    const rows = await this.getObjects<AuditSchedule>(SHEETS.AUDIT_SCHEDULES, AUDIT_SCHEDULE_COLS);
+    return rows
+      .map(({ _row, ...s }) => s)
+      .sort((a, b) => (a.AuditDate || '').localeCompare(b.AuditDate || '') || (a.TimeWindow || '').localeCompare(b.TimeWindow || ''));
+  }
+
+  async getAuditSchedule(scheduleId: string): Promise<AuditSchedule | null> {
+    const rows = await this.getObjects<AuditSchedule>(SHEETS.AUDIT_SCHEDULES, AUDIT_SCHEDULE_COLS);
+    const match = rows.find((s) => s.ScheduleID === scheduleId);
+    if (!match) return null;
+    const { _row, ...sched } = match;
+    return sched;
+  }
+
+  async createAuditSchedule(item: AuditSchedule): Promise<void> {
+    await this.appendRow(SHEETS.AUDIT_SCHEDULES, AUDIT_SCHEDULE_COLS, item as unknown as Record<string, unknown>);
+  }
+
+  async updateAuditSchedule(scheduleId: string, updates: Partial<AuditSchedule>): Promise<boolean> {
+    return this.updateRowByField(
+      SHEETS.AUDIT_SCHEDULES,
+      AUDIT_SCHEDULE_COLS,
+      'ScheduleID',
+      scheduleId,
+      updates as Record<string, unknown>
+    );
+  }
+
+  async deleteAuditSchedule(scheduleId: string): Promise<boolean> {
+    return (await this.deleteRowsWhere(SHEETS.AUDIT_SCHEDULES, AUDIT_SCHEDULE_COLS, 'ScheduleID', scheduleId)) > 0;
   }
 
   // ---- Audit Log ----

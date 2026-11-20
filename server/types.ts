@@ -173,6 +173,29 @@ export interface DirectMessage {
   CreatedAt: string;
 }
 
+export type AuditScheduleType =
+  | 'Internal ISO Audit'
+  | 'Department Audit'
+  | 'Follow-Up Verification'
+  | 'Surveillance Audit'
+  | 'Management Review';
+export type AuditScheduleStatus = 'Scheduled' | 'Completed' | 'Cancelled';
+
+export interface AuditSchedule {
+  ScheduleID: string;
+  Title: string;
+  AuditType: AuditScheduleType;
+  AuditDate: string;
+  TimeWindow: string;
+  Department: string;
+  LeadAuditor: string;
+  Status: AuditScheduleStatus;
+  Notes: string;
+  CreatedBy: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+}
+
 export interface DataStore {
   readonly mode: 'sqlite' | 'sheets';
   init(): Promise<void>;
@@ -233,6 +256,13 @@ export interface DataStore {
   listDirectMessagesForUser(userId: string): Promise<DirectMessage[]>;
   createDirectMessage(message: DirectMessage): Promise<void>;
   markDirectMessagesRead(fromUserId: string, toUserId: string): Promise<void>;
+
+  // Audit Schedules
+  listAuditSchedules(): Promise<AuditSchedule[]>;
+  getAuditSchedule(scheduleId: string): Promise<AuditSchedule | null>;
+  createAuditSchedule(item: AuditSchedule): Promise<void>;
+  updateAuditSchedule(scheduleId: string, updates: Partial<AuditSchedule>): Promise<boolean>;
+  deleteAuditSchedule(scheduleId: string): Promise<boolean>;
 
   // Audit log
   appendLog(entry: AuditLogEntry): Promise<void>;

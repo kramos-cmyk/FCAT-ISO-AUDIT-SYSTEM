@@ -215,3 +215,26 @@ export interface DmThreadSummary {
   lastRead?: boolean;
   unreadCount: number;
 }
+
+export type AuditScheduleType =
+  | 'Internal ISO Audit'
+  | 'Department Audit'
+  | 'Follow-Up Verification'
+  | 'Surveillance Audit'
+  | 'Management Review';
+export type AuditScheduleStatus = 'Scheduled' | 'Completed' | 'Cancelled';
+
+export interface AuditSchedule {
+  ScheduleID: string;
+  Title: string;
+  AuditType: AuditScheduleType;
+  AuditDate: string;
+  TimeWindow: string;
+  Department: string;
+  LeadAuditor: string;
+  Status: AuditScheduleStatus;
+  Notes: string;
+  CreatedBy: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+}

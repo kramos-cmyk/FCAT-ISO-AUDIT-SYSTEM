@@ -15,6 +15,7 @@ import type {
   AnnouncementHistoryRecord,
   AnnouncementRecord,
   AuditLogEntry,
+  AuditSchedule,
   CarComment,
   CarRecord,
   DataStore,
@@ -227,6 +228,22 @@ export class SqliteStore implements DataStore {
         CreatedAt TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_dm_pair ON direct_messages(FromUserID, ToUserID, CreatedAt);
+
+      CREATE TABLE IF NOT EXISTS audit_schedules (
+        ScheduleID TEXT PRIMARY KEY,
+        Title TEXT NOT NULL,
+        AuditType TEXT NOT NULL DEFAULT 'Internal ISO Audit',
+        AuditDate TEXT NOT NULL,
+        TimeWindow TEXT DEFAULT '',
+        Department TEXT DEFAULT '',
+        LeadAuditor TEXT DEFAULT '',
+        Status TEXT NOT NULL DEFAULT 'Scheduled',
+        Notes TEXT DEFAULT '',
+        CreatedBy TEXT NOT NULL,
+        CreatedAt TEXT NOT NULL,
+        UpdatedAt TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_sched_date ON audit_schedules(AuditDate);
     `);
 
     // Seed and migrate official service/department list
@@ -779,6 +796,60 @@ export class SqliteStore implements DataStore {
     this.db
       .prepare('UPDATE direct_messages SET Read = 1 WHERE FromUserID = ? AND ToUserID = ? AND Read = 0')
       .run(fromUserId, toUserId);
+  }
+
+  // ---- Audit Schedules ----
+  async listAuditSchedules(): Promise<AuditSchedule[]> {
+    return this.db
+      .prepare('SELECT * FROM audit_schedules ORDER BY AuditDate ASC, TimeWindow ASC, CreatedAt ASC')
+      .all() as AuditSchedule[];
+  }
+
+  async getAuditSchedule(scheduleId: string): Promise<AuditSchedule | null> {
+    return (
+      (this.db.prepare('SELECT * FROM audit_schedules WHERE ScheduleID = ?').get(scheduleId) as
+        | AuditSchedule
+        | undefined) || null
+    );
+  }
+
+  async createAuditSchedule(item: AuditSchedule): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO audit_schedules (
+          ScheduleID, Title, AuditType, AuditDate, TimeWindow, Department,
+          LeadAuditor, Status, Notes, CreatedBy, CreatedAt, UpdatedAt
+        ) VALUES (
+          @ScheduleID, @Title, @AuditType, @AuditDate, @TimeWindow, @Department,
+          @LeadAuditor, @Status, @Notes, @CreatedBy, @CreatedAt, @UpdatedAt
+        )`
+      )
+      .run(item);
+  }
+
+  async updateAuditSchedule(scheduleId: string, updates: Partial<AuditSchedule>): Promise<boolean> {
+    const allowed = [
+      'Title',
+      'AuditType',
+      'AuditDate',
+      'TimeWindow',
+      'Department',
+      'LeadAuditor',
+      'Status',
+      'Notes',
+      'UpdatedAt',
+    ] as const;
+    const entries = Object.entries(updates).filter(([k]) => (allowed as readonly string[]).includes(k));
+    if (entries.length === 0) return false;
+    const setSql = entries.map(([k]) => `${k} = ?`).join(', ');
+    const vals = entries.map(([, v]) => (v === undefined ? '' : String(v)));
+    const info = this.db.prepare(`UPDATE audit_schedules SET ${setSql} WHERE ScheduleID = ?`).run(...vals, scheduleId);
+    return info.changes > 0;
+  }
+
+  async deleteAuditSchedule(scheduleId: string): Promise<boolean> {
+    const info = this.db.prepare('DELETE FROM audit_schedules WHERE ScheduleID = ?').run(scheduleId);
+    return info.changes > 0;
   }
 
   // ---- Audit Log ----

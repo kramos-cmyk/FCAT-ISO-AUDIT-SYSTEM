@@ -13,16 +13,25 @@ export function SettingsPage({
   onNavigate: (page: AppPage) => void;
 }) {
   const { showToast } = useToast();
+  const [notifyEmail, setNotifyEmail] = useState('true');
   const [notifyOnFlag, setNotifyOnFlag] = useState('true');
+  const [emailConfigured, setEmailConfigured] = useState<boolean | null>(null);
+  const [emailFrom, setEmailFrom] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [sendingTest, setSendingTest] = useState(false);
 
   useEffect(() => {
-    api
-      .getSettings()
-      .then((s) => {
-        const key = `NotifyOnFlag_${user.userId}`;
-        if (s && s[key] !== undefined) setNotifyOnFlag(String(s[key]));
+    Promise.all([api.getSettings(), api.getEmailStatus().catch(() => null)])
+      .then(([s, emailStatus]) => {
+        const flagKey = `NotifyOnFlag_${user.userId}`;
+        const emailKey = `NotifyEmail_${user.userId}`;
+        if (s && s[flagKey] !== undefined) setNotifyOnFlag(String(s[flagKey]));
+        if (s && s[emailKey] !== undefined) setNotifyEmail(String(s[emailKey]));
+        if (emailStatus) {
+          setEmailConfigured(Boolean(emailStatus.configured));
+          setEmailFrom(emailStatus.fromAddress || '');
+        }
         setLoaded(true);
       })
       .catch(() => {
@@ -36,6 +45,7 @@ export function SettingsPage({
     setSaving(true);
     try {
       const updates: Record<string, string> = {};
+      updates[`NotifyEmail_${user.userId}`] = notifyEmail;
       updates[`NotifyOnFlag_${user.userId}`] = notifyOnFlag;
       await api.updateSettings(updates);
       showToast('Settings saved.', 'success');
@@ -46,11 +56,27 @@ export function SettingsPage({
     }
   };
 
+  const handleSendTestEmail = async () => {
+    setSendingTest(true);
+    try {
+      const res = await api.sendTestEmail();
+      if (!res.ok) {
+        showToast(res.error || 'Could not send test email.', 'error');
+        return;
+      }
+      showToast(`Test email sent to ${res.toEmail || user.email}.`, 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not send test email.', 'error');
+    } finally {
+      setSendingTest(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-white border border-[#EAD9D4] rounded-xl p-5 sm:p-6 shadow-sm">
         <h1 className="text-2xl font-bold text-[#4A1219] m-0">Settings</h1>
-        <form onSubmit={handleSave} className="space-y-4 mt-4 max-w-md">
+        <form onSubmit={handleSave} className="space-y-4 mt-4 max-w-lg">
           <div>
             <label className="block text-xs font-semibold text-[#4A1219] mb-1">Full Name</label>
             <input
@@ -60,6 +86,22 @@ export function SettingsPage({
               className="w-full rounded-lg border border-[#EAD9D4] bg-[#F8F4F0] px-3 py-2 text-sm text-[#7A6F6F]"
             />
           </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-[#4A1219] mb-1">
+              Auto-send email for my notifications (CARs, deadlines, Help Desk, messages)
+            </label>
+            <select
+              disabled={!loaded}
+              value={notifyEmail}
+              onChange={(e) => setNotifyEmail(e.target.value)}
+              className="w-full rounded-lg border border-[#EAD9D4] px-3 py-2 text-sm bg-white disabled:bg-[#F8F4F0] focus:outline-none focus:border-[#6B1A25]"
+            >
+              <option value="true">Yes — automatically email my account ({user.email})</option>
+              <option value="false">No — in-app notifications only</option>
+            </select>
+          </div>
+
           <div>
             <label className="block text-xs font-semibold text-[#4A1219] mb-1">
               Notify me by email when a record is flagged
@@ -74,13 +116,41 @@ export function SettingsPage({
               <option value="false">No</option>
             </select>
           </div>
-          <button
-            type="submit"
-            disabled={!loaded || saving}
-            className="px-5 py-2 text-sm font-semibold rounded-lg bg-[#6B1A25] hover:bg-[#4A1219] text-white cursor-pointer disabled:opacity-50"
-          >
-            {saving ? 'Saving...' : 'Save Settings'}
-          </button>
+
+          {emailConfigured !== null && (
+            <div className="rounded-lg border border-[#EAD9D4] bg-[#FCF6F3] px-3.5 py-2.5 text-xs text-[#4A1219] space-y-1">
+              {emailConfigured ? (
+                <p className="m-0">
+                  Automatic email delivery is active{emailFrom ? ` via ${emailFrom}` : ''}. Notifications sent to you will be emailed to <strong>{user.email}</strong>.
+                </p>
+              ) : (
+                <p className="m-0 text-[#7A6F6F]">
+                  To deliver emails externally, set <span className="font-mono-tabular font-semibold">SMTP_HOST</span>,{' '}
+                  <span className="font-mono-tabular font-semibold">SMTP_PORT</span>,{' '}
+                  <span className="font-mono-tabular font-semibold">SMTP_USER</span>, and{' '}
+                  <span className="font-mono-tabular font-semibold">SMTP_PASS</span> in your server environment variables.
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2.5 pt-1">
+            <button
+              type="submit"
+              disabled={!loaded || saving}
+              className="px-5 py-2 text-sm font-semibold rounded-lg bg-[#6B1A25] hover:bg-[#4A1219] text-white cursor-pointer disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save Settings'}
+            </button>
+            <button
+              type="button"
+              disabled={!loaded || sendingTest}
+              onClick={handleSendTestEmail}
+              className="px-4 py-2 text-sm font-semibold rounded-lg border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219] bg-white cursor-pointer disabled:opacity-50"
+            >
+              {sendingTest ? 'Sending...' : 'Send Test Email'}
+            </button>
+          </div>
         </form>
       </div>
 

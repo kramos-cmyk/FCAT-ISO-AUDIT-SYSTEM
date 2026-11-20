@@ -17,6 +17,7 @@ export const SHEETS = {
   HELPDESK_TICKETS: 'HelpDesk_Tickets',
   HELPDESK_MESSAGES: 'HelpDesk_Messages',
   DIRECT_MESSAGES: 'Direct_Messages',
+  AUDIT_SCHEDULES: 'Audit_Schedules',
 } as const;
 
 export const DEFAULT_DEPARTMENTS: string[] = [
@@ -134,6 +135,10 @@ export const HELPDESK_MESSAGE_COLS = [
 ];
 export const DIRECT_MESSAGE_COLS = [
   'MessageID', 'FromUserID', 'FromUserName', 'FromUserRole', 'ToUserID', 'Message', 'Read', 'CreatedAt',
+];
+export const AUDIT_SCHEDULE_COLS = [
+  'ScheduleID', 'Title', 'AuditType', 'AuditDate', 'TimeWindow', 'Department',
+  'LeadAuditor', 'Status', 'Notes', 'CreatedBy', 'CreatedAt', 'UpdatedAt',
 ];
 
 export const REQUIRED_FIELDS = ['Type', 'Department', 'DateIssued', 'Source'];
