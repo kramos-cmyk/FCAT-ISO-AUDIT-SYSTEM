@@ -20,6 +20,7 @@ export function SettingsPage({
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sendingTest, setSendingTest] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     Promise.all([api.getSettings(), api.getEmailStatus().catch(() => null)])
@@ -58,15 +59,22 @@ export function SettingsPage({
 
   const handleSendTestEmail = async () => {
     setSendingTest(true);
+    setTestResult(null);
     try {
       const res = await api.sendTestEmail();
       if (!res.ok) {
-        showToast(res.error || 'Could not send test email.', 'error');
+        const msg = res.error || 'Could not send test email.';
+        setTestResult({ ok: false, text: msg });
+        showToast(msg, 'error');
         return;
       }
-      showToast(`Test email sent to ${res.toEmail || user.email}.`, 'success');
+      const okMsg = `Test email sent to ${res.toEmail || user.email}.`;
+      setTestResult({ ok: true, text: okMsg });
+      showToast(okMsg, 'success');
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Could not send test email.', 'error');
+      const msg = err instanceof Error ? err.message : 'Could not send test email.';
+      setTestResult({ ok: false, text: msg });
+      showToast(msg, 'error');
     } finally {
       setSendingTest(false);
     }
@@ -125,12 +133,25 @@ export function SettingsPage({
                 </p>
               ) : (
                 <p className="m-0 text-[#7A6F6F]">
-                  To deliver emails externally, set <span className="font-mono-tabular font-semibold">SMTP_HOST</span>,{' '}
+                  To deliver emails externally, configure <span className="font-mono-tabular font-semibold">GOOGLE_MAIL_WEBHOOK_URL</span> (recommended for Render Free Tier) or{' '}
+                  <span className="font-mono-tabular font-semibold">SMTP_HOST</span>,{' '}
                   <span className="font-mono-tabular font-semibold">SMTP_PORT</span>,{' '}
                   <span className="font-mono-tabular font-semibold">SMTP_USER</span>, and{' '}
                   <span className="font-mono-tabular font-semibold">SMTP_PASS</span> in your server environment variables.
                 </p>
               )}
+            </div>
+          )}
+
+          {testResult && (
+            <div
+              className={`rounded-lg border px-3.5 py-2.5 text-xs ${
+                testResult.ok
+                  ? 'bg-[#E9F4EC] border-[#C5E0CB] text-[#255A2D]'
+                  : 'bg-[#FDECEC] border-[#F4C2C2] text-[#A32424]'
+              }`}
+            >
+              {testResult.text}
             </div>
           )}
 
