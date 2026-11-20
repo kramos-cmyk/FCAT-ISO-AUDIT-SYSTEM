@@ -8,7 +8,9 @@ import {
   fmtDateTime,
   followUpsOf,
   isAuditorRole,
+  isCarRaisedByUser,
   isProcessOwnerRole,
+  isSystemAdminRole,
   normalizeInputDate,
   possibleRootCausesOf,
   safeUrl,
@@ -52,20 +54,28 @@ export function CarFormPage({
   const { showToast } = useToast();
   const canBeAuditor = isAuditorRole(user.role);
   const canBeOwner = isProcessOwnerRole(user.role);
-  const isDualRole = canBeAuditor && canBeOwner;
+  const isSysAdmin = isSystemAdminRole(user.role);
+  const [editRecord, setEditRecord] = useState<CarRecord | null>(null);
+  const canManageAsAuditor = !editRecord
+    ? canBeAuditor
+    : isSysAdmin || (canBeAuditor && isCarRaisedByUser(editRecord, user));
+  const isDualRole = canManageAsAuditor && canBeOwner;
   const [roleMode, setRoleMode] = useState<'auditor' | 'owner'>(() =>
     mode === 'owner' && canBeOwner ? 'owner' : canBeAuditor ? 'auditor' : 'owner'
   );
-  const isAuditor = roleMode === 'auditor' && canBeAuditor;
+  const isAuditor = roleMode === 'auditor' && canManageAsAuditor;
 
   useEffect(() => {
-    setRoleMode(mode === 'owner' && canBeOwner ? 'owner' : canBeAuditor ? 'auditor' : 'owner');
-  }, [mode, carNo, canBeAuditor, canBeOwner]);
+    if (editRecord && !canManageAsAuditor && canBeOwner) {
+      setRoleMode('owner');
+      return;
+    }
+    setRoleMode(mode === 'owner' && canBeOwner ? 'owner' : canManageAsAuditor ? 'auditor' : 'owner');
+  }, [mode, carNo, editRecord, canManageAsAuditor, canBeOwner]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const [departments, setDepartments] = useState<string[]>([]);
-  const [editRecord, setEditRecord] = useState<CarRecord | null>(null);
 
   // Section 1: Finding Details
   const [customCarNo, setCustomCarNo] = useState('');
@@ -143,6 +153,16 @@ export function CarFormPage({
         }
 
         if (rec) {
+          const allowedAuditorOnRec =
+            isSysAdmin || (canBeAuditor && isCarRaisedByUser(rec, user));
+          if (!allowedAuditorOnRec && !canBeOwner) {
+            showToast(
+              'Only the Administrator or the Auditor who raised this finding can edit it.',
+              'error'
+            );
+            onDone();
+            return;
+          }
           setEditRecord(rec);
           setReceivedService(
             !rec.EmployeeID && rec.EmployeeName && rec.EmployeeName !== '(Unassigned)'

@@ -88,11 +88,11 @@ export function Layout({
 
   const items = useMemo(() => {
     return ALL_NAV_ITEMS.filter((item) => {
-      if (item.id === 'admin' || item.id === 'overview' || item.id === 'users' || item.id === 'form') {
+      if (item.id === 'admin' || item.id === 'overview' || item.id === 'form') {
         return hasAuditor;
       }
       if (item.id === 'employee') return hasOwner;
-      if (item.id === 'company') return hasSysAdmin;
+      if (item.id === 'company' || item.id === 'users') return hasSysAdmin;
       return true;
     });
   }, [hasAuditor, hasOwner, hasSysAdmin]);

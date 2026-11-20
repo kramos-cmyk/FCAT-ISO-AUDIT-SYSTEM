@@ -30,8 +30,8 @@ import { SettingsPage } from './pages/SettingsPage';
 import { TermsPage } from './pages/TermsPage';
 import { UsersPage } from './pages/UsersPage';
 
-const AUDITOR_PAGES: AppPage[] = ['admin', 'overview', 'users'];
-const SYSTEM_ADMIN_ONLY_PAGES: AppPage[] = ['company'];
+const AUDITOR_PAGES: AppPage[] = ['admin', 'overview'];
+const SYSTEM_ADMIN_ONLY_PAGES: AppPage[] = ['company', 'users'];
 
 function readInitialRoute(): { page: AppPage | 'login'; carNo?: string; mode?: 'auditor' | 'owner' } {
   const params = new URLSearchParams(window.location.search);
@@ -220,8 +220,9 @@ function AppInner() {
     >
       {activePage === 'admin' && (
         <AdminDashboardPage
+          user={user}
           onViewCar={(c) => setViewCarNo(c)}
-          onEditCar={(c) => navigate('form', c, 'auditor')}
+          onEditCar={(c, mode) => navigate('form', c, mode || 'auditor')}
           onNewCar={() => navigate('form')}
         />
       )}

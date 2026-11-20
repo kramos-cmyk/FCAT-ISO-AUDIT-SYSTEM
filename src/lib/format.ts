@@ -20,6 +20,19 @@ export function isProcessOwnerRole(role: string | undefined): boolean {
   return role === 'Employee' || role === 'Auditor+Employee' || role === 'Admin+Employee';
 }
 
+export function isCarRaisedByUser(
+  rec: Pick<CarRecord, 'RaisedBy'> | null | undefined,
+  user: { userId?: string; name?: string; email?: string } | null | undefined
+): boolean {
+  if (!rec || !user) return false;
+  const raised = String(rec.RaisedBy || '').trim().toLowerCase();
+  if (!raised) return false;
+  if (user.name && raised === user.name.trim().toLowerCase()) return true;
+  if (user.email && raised === user.email.trim().toLowerCase()) return true;
+  if (user.userId && raised === user.userId.trim().toLowerCase()) return true;
+  return false;
+}
+
 export function safeUrl(url: string | undefined | null): string {
   const s = String(url || '').trim();
   if (!s) return '';

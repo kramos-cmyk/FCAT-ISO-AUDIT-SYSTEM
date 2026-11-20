@@ -159,6 +159,46 @@ function userCanAccessCar(userId: string, userDept: string, rec: CarRecord): boo
   return false;
 }
 
+function isCarRaisedByUser(
+  rec: Pick<CarRecord, 'RaisedBy'>,
+  user: { userId: string; name: string; email?: string }
+): boolean {
+  const raised = String(rec.RaisedBy || '').trim().toLowerCase();
+  if (!raised) return false;
+  if (user.name && raised === user.name.trim().toLowerCase()) return true;
+  if (user.email && raised === user.email.trim().toLowerCase()) return true;
+  if (user.userId && raised === user.userId.trim().toLowerCase()) return true;
+  return false;
+}
+
+async function canUserViewCar(user: SessionUser, rec: CarRecord): Promise<boolean> {
+  if (isSystemAdmin(user.role)) return true;
+  const freshUser = await getStore().findUserById(user.userId);
+  const userDept = freshUser ? freshUser.Department : user.department;
+  if (userCanAccessCar(user.userId, userDept, rec)) return true;
+  if (isAuditorOrAdmin(user.role)) {
+    const info = {
+      userId: user.userId,
+      name: freshUser?.Name || user.name,
+      email: freshUser?.Email || user.email,
+    };
+    if (isCarRaisedByUser(rec, info)) return true;
+  }
+  return false;
+}
+
+async function canAuditorManageCar(user: SessionUser, rec: CarRecord): Promise<boolean> {
+  if (isSystemAdmin(user.role)) return true;
+  if (!isAuditorOrAdmin(user.role)) return false;
+  const freshUser = await getStore().findUserById(user.userId);
+  const info = {
+    userId: user.userId,
+    name: freshUser?.Name || user.name,
+    email: freshUser?.Email || user.email,
+  };
+  return isCarRaisedByUser(rec, info);
+}
+
 async function dispatchNotificationEmail(notif: NotificationRecord): Promise<void> {
   if (!isEmailConfigured()) return;
   if (String(notif.RelatedCARNo || '').trim().startsWith('DM:')) return;
@@ -433,15 +473,27 @@ async function notifyCarTarget(
   }
 }
 
-async function notifyAuditors(fromUserId: string, message: string, relatedRef: string) {
+async function notifyAuditors(
+  fromUserId: string,
+  message: string,
+  relatedRef: string,
+  carRecord?: Pick<CarRecord, 'RaisedBy'>
+) {
   const store = getStore();
   const users = await store.listUsers();
-  const auditors = users.filter(
-    (u) =>
-      u.Status === 'Active' &&
-      u.UserID !== fromUserId &&
-      isAuditorOrAdmin(normalizeUserRole(u.Role))
-  );
+  const auditors = users.filter((u) => {
+    if (u.Status !== 'Active' || u.UserID === fromUserId) return false;
+    const role = normalizeUserRole(u.Role);
+    if (isSystemAdmin(role)) return true;
+    if (carRecord && isAuditorOrAdmin(role)) {
+      return isCarRaisedByUser(carRecord, {
+        userId: u.UserID,
+        name: u.Name,
+        email: u.Email,
+      });
+    }
+    return false;
+  });
   for (const u of auditors) {
     await createAndPushNotification({
       NotificationID: newId('N'),
@@ -651,8 +703,8 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  // ---- USERS ----
-  router.get('/users', requireAuditor, async (_req, res) => {
+  // ---- USERS (System Administrator only) ----
+  router.get('/users', requireSystemAdmin, async (_req, res) => {
     try {
       const users = await getStore().listUsers();
       res.json(
@@ -671,7 +723,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/users', requireAuditor, async (req: AuthedRequest, res) => {
+  router.post('/users', requireSystemAdmin, async (req: AuthedRequest, res) => {
     try {
       const data = req.body || {};
       const name = String(data.name || '').trim();
@@ -723,7 +775,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.put('/users/:userId', requireAuditor, async (req: AuthedRequest, res) => {
+  router.put('/users/:userId', requireSystemAdmin, async (req: AuthedRequest, res) => {
     try {
       const { userId } = req.params;
       const data = req.body || {};
@@ -790,7 +842,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/users/:userId/lock', requireAuditor, async (req: AuthedRequest, res) => {
+  router.post('/users/:userId/lock', requireSystemAdmin, async (req: AuthedRequest, res) => {
     try {
       const { userId } = req.params;
       const lock = Boolean(req.body?.lock);
@@ -877,12 +929,25 @@ export function createApiRouter(): express.Router {
       const store = getStore();
       const all = await store.listCARs();
       const departmentOnly = String(req.query.scope || '').toLowerCase() === 'department';
-      if (!departmentOnly && isAuditorOrAdmin(req.user!.role)) {
+      if (!departmentOnly && isSystemAdmin(req.user!.role)) {
         res.json(all);
         return;
       }
       const freshUser = await store.findUserById(req.user!.userId);
       const userDept = freshUser ? freshUser.Department : req.user!.department;
+      if (!departmentOnly && isAuditorOrAdmin(req.user!.role)) {
+        const userInfo = {
+          userId: req.user!.userId,
+          name: freshUser?.Name || req.user!.name,
+          email: freshUser?.Email || req.user!.email,
+        };
+        res.json(
+          all.filter(
+            (r) => isCarRaisedByUser(r, userInfo) || userCanAccessCar(req.user!.userId, userDept, r)
+          )
+        );
+        return;
+      }
       res.json(all.filter((r) => userCanAccessCar(req.user!.userId, userDept, r)));
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load records.' });
@@ -897,13 +962,9 @@ export function createApiRouter(): express.Router {
         res.json(null);
         return;
       }
-      if (!isAuditorOrAdmin(req.user!.role)) {
-        const freshUser = await store.findUserById(req.user!.userId);
-        const userDept = freshUser ? freshUser.Department : req.user!.department;
-        if (!userCanAccessCar(req.user!.userId, userDept, rec)) {
-          res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
-          return;
-        }
+      if (!(await canUserViewCar(req.user!, rec))) {
+        res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
+        return;
       }
       res.json(rec);
     } catch (err) {
@@ -1052,9 +1113,17 @@ export function createApiRouter(): express.Router {
       const payload: Record<string, unknown> = { ...(req.body || {}) };
       const submitAs = String(payload.submitAs || '').toLowerCase();
       delete payload.submitAs;
-      const isAdmin =
-        isAuditorOrAdmin(req.user!.role) && !(isProcessOwner(req.user!.role) && submitAs === 'owner');
-      if (!isAdmin) {
+      const wantsOwnerSubmit = isProcessOwner(req.user!.role) && submitAs === 'owner';
+      const isAdmin = isAuditorOrAdmin(req.user!.role) && !wantsOwnerSubmit;
+      if (isAdmin) {
+        if (!(await canAuditorManageCar(req.user!, rec))) {
+          res.status(403).json({
+            ok: false,
+            error: 'Only the Administrator or the Auditor who raised this finding can edit finding details.',
+          });
+          return;
+        }
+      } else {
         const freshUser = await store.findUserById(req.user!.userId);
         const userDept = freshUser ? freshUser.Department : req.user!.department;
         if (!userCanAccessCar(req.user!.userId, userDept, rec)) {
@@ -1151,7 +1220,8 @@ export function createApiRouter(): express.Router {
         await notifyAuditors(
           req.user!.userId,
           `${req.user!.name} (${rec.Department || 'Process Owner'}) submitted/updated CAR ${carNo}.`,
-          carNo
+          carNo,
+          rec
         );
       }
 
@@ -1174,6 +1244,10 @@ export function createApiRouter(): express.Router {
       const rec = await store.getCAR(carNo);
       if (!rec) {
         res.json({ ok: false, error: 'Record not found.' });
+        return;
+      }
+      if (!(await canAuditorManageCar(req.user!, rec))) {
+        res.status(403).json({ ok: false, error: 'Only the Administrator or the Auditor who raised this finding can flag it.' });
         return;
       }
       await store.updateCAR(carNo, { AdminFlag: 'Needs Attention', AdminNote: note, UpdatedAt: nowIso() });
@@ -1203,6 +1277,14 @@ export function createApiRouter(): express.Router {
       const { carNo } = req.params;
       const store = getStore();
       const rec = await store.getCAR(carNo);
+      if (!rec) {
+        res.json({ ok: false, error: 'Record not found.' });
+        return;
+      }
+      if (!(await canAuditorManageCar(req.user!, rec))) {
+        res.status(403).json({ ok: false, error: 'Only the Administrator or the Auditor who raised this finding can close it.' });
+        return;
+      }
       const ok = await store.updateCAR(carNo, { Status: 'Closed', UpdatedAt: nowIso() });
       if (ok) {
         if (rec) {
@@ -1226,6 +1308,14 @@ export function createApiRouter(): express.Router {
       const { carNo } = req.params;
       const store = getStore();
       const rec = await store.getCAR(carNo);
+      if (!rec) {
+        res.json({ ok: false, error: 'Record not found.' });
+        return;
+      }
+      if (!(await canAuditorManageCar(req.user!, rec))) {
+        res.status(403).json({ ok: false, error: 'Only the Administrator or the Auditor who raised this finding can reopen it.' });
+        return;
+      }
       const ok = await store.updateCAR(carNo, { Status: 'Open', UpdatedAt: nowIso() });
       if (!ok) {
         res.json({ ok: false, error: 'Record not found.' });
@@ -1254,6 +1344,10 @@ export function createApiRouter(): express.Router {
       const rec = await store.getCAR(carNo);
       if (!rec) {
         res.json({ ok: false, error: 'Record not found.' });
+        return;
+      }
+      if (!(await canAuditorManageCar(req.user!, rec))) {
+        res.status(403).json({ ok: false, error: 'Only the Administrator or the Auditor who raised this finding can set its deadline.' });
         return;
       }
       await store.updateCAR(carNo, { AdminDeadline: deadline, UpdatedAt: nowIso() });
@@ -1292,6 +1386,10 @@ export function createApiRouter(): express.Router {
       const rec = await store.getCAR(carNo);
       if (!rec) {
         res.json({ ok: false, error: 'Record not found.' });
+        return;
+      }
+      if (!(await canAuditorManageCar(req.user!, rec))) {
+        res.status(403).json({ ok: false, error: 'Only the Administrator or the Auditor who raised this finding can add follow-ups.' });
         return;
       }
       const entry = req.body || {};
@@ -1335,13 +1433,9 @@ export function createApiRouter(): express.Router {
         res.json([]);
         return;
       }
-      if (!isAuditorOrAdmin(req.user!.role)) {
-        const freshUser = await store.findUserById(req.user!.userId);
-        const userDept = freshUser ? freshUser.Department : req.user!.department;
-        if (!userCanAccessCar(req.user!.userId, userDept, rec)) {
-          res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
-          return;
-        }
+      if (!(await canUserViewCar(req.user!, rec))) {
+        res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
+        return;
       }
       res.json(await store.listCarComments(req.params.carNo));
     } catch (err) {
@@ -1361,6 +1455,10 @@ export function createApiRouter(): express.Router {
       const rec = await store.getCAR(carNo);
       if (!rec) {
         res.json({ ok: false, error: 'Record not found.' });
+        return;
+      }
+      if (!(await canAuditorManageCar(req.user!, rec))) {
+        res.status(403).json({ ok: false, error: 'Only the Administrator or the Auditor who raised this finding can post comments.' });
         return;
       }
       const comment = {
@@ -1403,13 +1501,9 @@ export function createApiRouter(): express.Router {
         res.status(404).json({ ok: false, error: 'Record not found.' });
         return;
       }
-      if (!isAuditorOrAdmin(req.user!.role)) {
-        const freshUser = await store.findUserById(req.user!.userId);
-        const userDept = freshUser ? freshUser.Department : req.user!.department;
-        if (!userCanAccessCar(req.user!.userId, userDept, rec)) {
-          res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
-          return;
-        }
+      if (!(await canUserViewCar(req.user!, rec))) {
+        res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
+        return;
       }
       const company = await store.getCompanyDetails();
       const pdfBuffer = await generateCarPdfBuffer(rec, company);

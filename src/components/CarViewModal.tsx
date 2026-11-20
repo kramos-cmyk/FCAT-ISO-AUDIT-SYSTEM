@@ -9,7 +9,9 @@ import {
   fmtDateTime,
   followUpsOf,
   isAuditorRole,
+  isCarRaisedByUser,
   isRecordOverdue,
+  isSystemAdminRole,
   possibleRootCausesOf,
   safeUrl,
 } from '../lib/format';
@@ -785,7 +787,7 @@ export function CarViewModal({
                     </div>
                   )}
 
-                  {isAuditorRole(user.role) && (
+                  {(isSystemAdminRole(user.role) || (isAuditorRole(user.role) && isCarRaisedByUser(record, user))) && (
                     <div className="mt-4 pt-3 border-t border-[#EAD9D4]">
                       <textarea
                         rows={2}

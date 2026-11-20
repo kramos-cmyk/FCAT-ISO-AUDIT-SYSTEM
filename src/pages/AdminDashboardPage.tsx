@@ -1,8 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, ExternalLink, History, Plus, RefreshCw, Search } from 'lucide-react';
 import { api } from '../lib/api';
-import { evidenceLinksOf, fmtDate, fmtDateTime, isRecordOverdue, normalizeInputDate, roleLabel, safeUrl } from '../lib/format';
-import type { AuditLogItem, AuditSchedule, CarRecord } from '../lib/types';
+import {
+  evidenceLinksOf,
+  fmtDate,
+  fmtDateTime,
+  isCarRaisedByUser,
+  isProcessOwnerRole,
+  isRecordOverdue,
+  isSystemAdminRole,
+  normalizeInputDate,
+  roleLabel,
+  safeUrl,
+} from '../lib/format';
+import type { AuditLogItem, AuditSchedule, CarRecord, SessionUser } from '../lib/types';
 import { AuditCalendarView } from '../components/AuditCalendarView';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { StatusLabel } from '../components/StatusLabel';
@@ -278,15 +289,19 @@ function describeAuditAction(action: string): ActionMeta {
 }
 
 export function AdminDashboardPage({
+  user,
   onViewCar,
   onEditCar,
   onNewCar,
 }: {
+  user: SessionUser;
   onViewCar: (carNo: string) => void;
-  onEditCar: (carNo: string) => void;
+  onEditCar: (carNo: string, mode?: 'auditor' | 'owner') => void;
   onNewCar: () => void;
 }) {
   const { showToast } = useToast();
+  const isSysAdmin = isSystemAdminRole(user.role);
+  const canOwnerRespond = isProcessOwnerRole(user.role);
   const [activeTab, setActiveTab] = useState<DashboardTab>('submissions');
 
   const [records, setRecords] = useState<CarRecord[]>([]);
@@ -610,9 +625,13 @@ export function AdminDashboardPage({
       <div className="bg-white border border-[#EAD9D4] rounded-xl p-5 sm:p-6 shadow-sm">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-5">
           <div>
-            <h1 className="text-2xl font-bold text-[#4A1219] m-0">All Submissions</h1>
+            <h1 className="text-2xl font-bold text-[#4A1219] m-0">
+              {isSysAdmin ? 'All Submissions' : 'My Findings & Process CARs'}
+            </h1>
             <p className="text-xs text-[#7A6F6F] mt-1">
-              Review, assign deadlines, flag for attention, or close Corrective Action Reports across all departments.
+              {isSysAdmin
+                ? 'Review, assign deadlines, flag for attention, or close Corrective Action Reports across all departments.'
+                : 'Review findings you raised and Corrective Action Reports assigned to your own process/department.'}
             </p>
           </div>
 
@@ -750,49 +769,64 @@ export function AdminDashboardPage({
                         >
                           View
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => onEditCar(r.CARNo)}
-                          className="px-2.5 py-1 text-xs font-semibold rounded-md bg-[#6B1A25] hover:bg-[#4A1219] text-white cursor-pointer"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setFlagCarNo(r.CARNo);
-                            setFlagMessage('');
-                          }}
-                          className="px-2.5 py-1 text-xs font-semibold rounded-md border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219] cursor-pointer"
-                        >
-                          Flag
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDeadlineCarNo(r.CARNo);
-                            setDeadlineDate(r.AdminDeadline || '');
-                          }}
-                          className="px-2.5 py-1 text-xs font-semibold rounded-md border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219] cursor-pointer"
-                        >
-                          Deadline
-                        </button>
-                        {r.Status !== 'Closed' ? (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmAction({ type: 'close', carNo: r.CARNo })}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-md bg-[#2F6D39] hover:bg-[#255A2D] text-white cursor-pointer"
-                          >
-                            Close
-                          </button>
+                        {(isSysAdmin || isCarRaisedByUser(r, user)) ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => onEditCar(r.CARNo, 'auditor')}
+                              className="px-2.5 py-1 text-xs font-semibold rounded-md bg-[#6B1A25] hover:bg-[#4A1219] text-white cursor-pointer"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFlagCarNo(r.CARNo);
+                                setFlagMessage('');
+                              }}
+                              className="px-2.5 py-1 text-xs font-semibold rounded-md border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219] cursor-pointer"
+                            >
+                              Flag
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDeadlineCarNo(r.CARNo);
+                                setDeadlineDate(r.AdminDeadline || '');
+                              }}
+                              className="px-2.5 py-1 text-xs font-semibold rounded-md border border-[#EAD9D4] hover:border-[#6B1A25] text-[#4A1219] cursor-pointer"
+                            >
+                              Deadline
+                            </button>
+                            {r.Status !== 'Closed' ? (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmAction({ type: 'close', carNo: r.CARNo })}
+                                className="px-2.5 py-1 text-xs font-semibold rounded-md bg-[#2F6D39] hover:bg-[#255A2D] text-white cursor-pointer"
+                              >
+                                Close
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmAction({ type: 'reopen', carNo: r.CARNo })}
+                                className="px-2.5 py-1 text-xs font-semibold rounded-md bg-[#C9A227] hover:bg-[#A9861E] text-[#4A1219] cursor-pointer"
+                              >
+                                Reopen
+                              </button>
+                            )}
+                          </>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmAction({ type: 'reopen', carNo: r.CARNo })}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-md bg-[#C9A227] hover:bg-[#A9861E] text-[#4A1219] cursor-pointer"
-                          >
-                            Reopen
-                          </button>
+                          canOwnerRespond &&
+                          (r.Status !== 'Closed' || r.AdminFlag === 'Needs Attention') && (
+                            <button
+                              type="button"
+                              onClick={() => onEditCar(r.CARNo, 'owner')}
+                              className="px-2.5 py-1 text-xs font-semibold rounded-md bg-[#6B1A25] hover:bg-[#4A1219] text-white cursor-pointer"
+                            >
+                              {r.AdminFlag === 'Needs Attention' ? 'Resubmit' : 'Respond'}
+                            </button>
+                          )
                         )}
                         <button
                           type="button"
