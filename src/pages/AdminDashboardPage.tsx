@@ -411,6 +411,7 @@ export function AdminDashboardPage({
         if (filterDept && r.Department !== filterDept) return false;
         if (q) {
           const matches =
+            (r.RaisedBy || '').toLowerCase().includes(q) ||
             (r.EmployeeName || '').toLowerCase().includes(q) ||
             (r.CARNo || '').toLowerCase().includes(q) ||
             (r.Details || '').toLowerCase().includes(q) ||
@@ -668,7 +669,7 @@ export function AdminDashboardPage({
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search handler / CAR no."
+                placeholder="Search raised by / CAR no."
                 className="rounded-lg border border-[#EAD9D4] pl-9 pr-3 py-2 text-sm bg-white focus:outline-none focus:border-[#6B1A25] w-52"
               />
             </div>
@@ -698,7 +699,7 @@ export function AdminDashboardPage({
               <thead>
                 <tr className="border-b-2 border-[#EAD9D4] text-left text-[11px] font-bold uppercase tracking-wider text-[#7A6F6F]">
                   <th className="py-3 pr-3">CAR No.</th>
-                  <th className="py-3 pr-3">Handled By</th>
+                  <th className="py-3 pr-3">Raised By</th>
                   <th className="py-3 pr-3">Dept</th>
                   <th className="py-3 pr-3">Type</th>
                   <th className="py-3 pr-3">ISO Clause</th>
@@ -720,11 +721,7 @@ export function AdminDashboardPage({
                         {r.CARNo}
                       </td>
                       <td className="py-3 pr-3">
-                        {r.EmployeeName && r.EmployeeName !== '(Unassigned)' ? (
-                          r.EmployeeName
-                        ) : (
-                          <span className="text-[#7A6F6F]">Unclaimed</span>
-                        )}
+                        {r.RaisedBy || <span className="text-[#7A6F6F]">—</span>}
                       </td>
                       <td className="py-3 pr-3">{r.Department}</td>
                       <td className="py-3 pr-3">{r.Type}</td>
