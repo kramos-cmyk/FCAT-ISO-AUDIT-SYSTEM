@@ -10,51 +10,144 @@ export interface VersionRelease {
 
 export const APP_VERSION_HISTORY: VersionRelease[] = [
   {
-    version: 'v2.4.0',
+    version: 'V1.4',
     date: 'Current Release',
     tag: 'Latest',
-    title: 'Full-Screen Portal, Role Governance & Dual-Role Accounts',
+    title: 'Role Governance, Pre-Login Portal & Per-CAR Activity Log',
     highlights: [
-      'Added full-screen pre-login FCAT portal with pop-up modals for Programs & Enrollment, Scholarship, About FCAT, and public Version History, plus direct link to fcat.com.ph.',
-      'Enforced scoped CAR visibility: System Administrators access all CARs and User Management, while Auditors manage findings they raised and their own process CARs.',
-      'Added Dual-Role account support (Auditor & Process Owner, System Admin & Process Owner) with an explicit editing mode switcher on CAR forms.',
-      'Updated the submissions register to display Raised By alongside Department for clearer accountability.',
+      'Enforced scoped CAR visibility: System Administrators access all CARs and User Management, while Auditors view and manage findings they raised and their own department/process CARs.',
+      'Added Dual-Role account support (Auditor & Process Owner, System Admin & Process Owner) with a form mode switcher, and updated the submissions table to display Raised By.',
+      'Launched the full-screen FCAT campus pre-login portal with pop-up modals for Programs & Enrollment, Scholarship, About FCAT, and public Version History, plus a direct link to fcat.com.ph.',
+      'Implemented the per-CAR Activity Log timeline so auditors and process owners can track status changes, comments, evidence updates, flags, deadlines, follow-ups, and section edits.',
     ],
   },
   {
-    version: 'v2.3.0',
-    date: 'Workspace Update',
-    title: 'Appearance Settings & Department Identity Icons',
+    version: 'V1.3',
+    date: 'Privacy & Workspace Update',
+    title: 'DPO Privacy Controls, Appearance Settings & Department Icons',
     highlights: [
-      'Added personal workspace preferences for theme (FCAT Classic, Crisp Light, Dark Mode), text size, and table row spacing.',
+      'Locked auto-email notification controls exclusively to System Administrators, added Announcements to the Notification Bell, and kept private direct messages strictly in-app for DPO privacy compliance.',
+      'Added personal workspace settings for theme (FCAT Classic, Crisp Light, Dark Mode), text size, and table row spacing.',
       'Added unique department and service icons across user profiles and sidebar navigation.',
     ],
   },
   {
-    version: 'v2.2.0',
-    date: 'Privacy & Notifications',
-    title: 'DPO Privacy Controls & Bell Alerts',
-    highlights: [
-      'Locked auto-email notification toggles exclusively to System Administrators.',
-      'Added Announcements to the real-time Notification Bell and kept private direct messages strictly in-app for Data Privacy compliance.',
-    ],
-  },
-  {
-    version: 'v2.1.0',
+    version: 'V1.2',
     date: 'Operations Expansion',
     title: 'Audit Calendar, Help Desk & Real-Time Updates',
     highlights: [
-      'Added the ISO Audit Schedule & Calendar for tracking upcoming internal, surveillance, and follow-up audits.',
-      'Launched Help Desk ticketing with CAR cross-referencing and real-time in-app notifications.',
+      'Added the ISO Audit Schedule & Calendar for tracking upcoming internal, department, surveillance, and follow-up audits.',
+      'Launched Help Desk ticketing with CAR cross-referencing, direct messaging, and real-time in-app notifications.',
     ],
   },
   {
-    version: 'v2.0.0',
-    date: 'Foundation Release',
-    title: 'FO-RI-05 Digital CAR & Compliance Platform',
+    version: 'V1.1',
+    date: 'Platform Migration',
+    title: 'Full-Stack Web Platform & Bidirectional Storage Architecture',
     highlights: [
-      'Digitized the FO-RI-05 Corrective Action Report workflow with 5-Why root cause analysis, evidence uploads, and 3-page PDF export.',
-      'Integrated Data Privacy & Accountability confirmation gate, audit trail logging, and SQLite / Google Sheets storage synchronization.',
+      'Migrated from Google Apps Script to a dedicated Node.js + Express + React/TypeScript web application.',
+      'Added persistent SQLite database storage alongside live integration and bidirectional sync with Google Sheets.',
+      'Added direct server-side FO-RI-05 PDF export, interactive notification read states, Data Privacy confirmation gate, and strict per-user authorization.',
+    ],
+  },
+  {
+    version: 'V1.0',
+    date: 'Access Control Update',
+    title: 'Departments & Access',
+    highlights: [
+      'Added a centrally managed Department list to remove free-text data-entry errors.',
+      'Process Owners can now belong to more than one department.',
+      'Auditors can filter records and view KPIs by department.',
+      'CAR No. can now optionally be set manually by the Auditor when raising a finding, instead of always being auto-generated.',
+    ],
+  },
+  {
+    version: 'V0.9',
+    date: 'Maintenance Update',
+    title: 'Data Integrity Fixes',
+    highlights: [
+      'Fixed a spreadsheet schema issue where newly added columns could misalign data on records created before the change.',
+      'Fixed dates displaying as raw, unformatted timestamps in several places.',
+      'Fixed broken images on Announcement posts.',
+    ],
+  },
+  {
+    version: 'V0.8',
+    date: 'Layout Update',
+    title: 'Navigation & Structure',
+    highlights: [
+      'User Management split out into its own dedicated page.',
+      'Overview KPIs and the per-department breakdown split out into their own page, separate from the submissions list.',
+    ],
+  },
+  {
+    version: 'V0.7',
+    date: 'Collaboration Update',
+    title: 'Collaboration Features',
+    highlights: [
+      'Added comments on CAR records and Auditor-set deadlines, with automatic notifications to the responsible department.',
+      'Announcements can now include images, can be edited, and keep a full edit history.',
+      'Added comments on Announcements, open to all users, with moderated deletion.',
+    ],
+  },
+  {
+    version: 'V0.6',
+    date: 'Workflow Update',
+    title: 'Workflow Overhaul: Auditors & Process Owners',
+    highlights: [
+      'Roles renamed to Auditor Account and Process Owner throughout the system.',
+      'Findings are now raised by an Auditor and routed to a Department, rather than being self-submitted by one employee.',
+      'Any Process Owner in the target department can claim and work an unclaimed finding.',
+      'Required fields now depend on who is completing the form: Finding Details for Auditors, Correction through Sign-off for Process Owners.',
+    ],
+  },
+  {
+    version: 'V0.5',
+    date: 'Design Update',
+    title: 'Dashboards & Visual Redesign',
+    highlights: [
+      'Added ISO Clause and Company Document columns to record tables.',
+      'Introduced KPI summary cards, a page footer, and an Announcements feature.',
+      'Full visual redesign: refined color palette, typography, spacing, and component styling throughout.',
+    ],
+  },
+  {
+    version: 'V0.4',
+    date: 'Security Update',
+    title: 'Data Integrity & Security Hardening',
+    highlights: [
+      'Fixed the Edit button opening a blank form instead of the selected record.',
+      'Added validation against invalid or unsafe evidence links, and against spreadsheet formula injection in free-text fields.',
+      'Closed-record edit locking is now enforced on the server, not just hidden in the interface.',
+      'Added the missing Auditor Follow-up / Verification fields to the form.',
+    ],
+  },
+  {
+    version: 'V0.3',
+    date: 'Optimization Update',
+    title: 'Performance',
+    highlights: [
+      'Record updates now save in a single operation instead of one per changed field.',
+      'Cached company branding and PDF export logo lookups to speed up page loads.',
+    ],
+  },
+  {
+    version: 'V0.2',
+    date: 'Patch Update',
+    title: 'Stability & Bug Fixes',
+    highlights: [
+      'Fixed validation incorrectly requiring "Details" on Opportunities for Improvement.',
+      'Fixed the Save button getting stuck on "Saving..." after a record actually saved successfully.',
+      'Fixed garbled raw-JSON display of Contributing Factors in the Root Cause Analysis view.',
+      'Fixed unreliable page redirects after saving a record or logging in.',
+    ],
+  },
+  {
+    version: 'V0.1',
+    date: 'Initial Release',
+    title: 'Initial Release',
+    highlights: [
+      'Core system for recording, tracking, and closing CAR / NC / OFI findings, with Employee and Admin roles.',
     ],
   },
 ];

@@ -101,7 +101,17 @@ export function LoginPage({
   };
 
   return (
-    <div className="min-h-screen flex flex-col relative overflow-hidden bg-gradient-to-br from-[#83102E] via-[#750D28] to-[#4E0719] text-white">
+    <div className="min-h-screen flex flex-col relative overflow-hidden bg-[#33090F] bg-[url('/assets/aistudio/FCAT_Background_9d8d0c62.png')] bg-cover bg-center bg-no-repeat bg-fixed text-white">
+      {/* Readability scrim keeping the FCAT campus building clearly visible */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#2A050E]/80 via-[#380714]/50 to-[#22040B]/30"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#23030B]/45 via-transparent to-[#1B0208]/65"
+      />
+
       {/* Subtle Decorative Concentric Arcs (top-left) */}
       <svg
         aria-hidden="true"
@@ -116,7 +126,7 @@ export function LoginPage({
       </svg>
 
       {/* Top Navigation Bar */}
-      <header className="relative z-20 border-b border-white/10 bg-[#6B0C24]/40 backdrop-blur-sm">
+      <header className="relative z-20 border-b border-white/15 bg-[#3B0613]/55 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-8 h-16 flex items-center justify-between gap-4">
           <button
             type="button"
@@ -233,7 +243,7 @@ export function LoginPage({
         <div className="max-w-7xl mx-auto w-full px-4 sm:px-8 py-10 sm:py-14 grid grid-cols-1 lg:grid-cols-12 items-center gap-10 lg:gap-12">
           {/* Left Column: Typography & Actions */}
           <div className="lg:col-span-7 text-left">
-            <h1 className="font-display text-3xl sm:text-5xl lg:text-[3.4rem] font-bold text-white leading-[1.12] tracking-tight m-0">
+            <h1 className="font-display text-3xl sm:text-5xl lg:text-[3.4rem] font-bold text-white leading-[1.12] tracking-tight m-0 drop-shadow-md">
               {companyName}
             </h1>
 
@@ -243,11 +253,11 @@ export function LoginPage({
               </span>
             </div>
 
-            <h2 className="font-display text-2xl sm:text-4xl lg:text-[2.7rem] font-bold text-white leading-[1.15] m-0">
+            <h2 className="font-display text-2xl sm:text-4xl lg:text-[2.7rem] font-bold text-white leading-[1.15] m-0 drop-shadow-md">
               ISO Audit &amp; Compliance Management System
             </h2>
 
-            <p className="mt-5 text-sm sm:text-base text-white/85 max-w-xl leading-relaxed">
+            <p className="mt-5 text-sm sm:text-base text-white/90 max-w-xl leading-relaxed drop-shadow-sm">
               FCAT has unified its {standard} Corrective Action Reports (FO-RI-05), internal audit
               schedules, department compliance tracking, and verified follow-ups into one centralized
               portal.
@@ -314,12 +324,12 @@ export function LoginPage({
       </main>
 
       {/* Subtle Full-Screen Bottom Bar */}
-      <footer className="relative z-10 border-t border-white/10 px-4 sm:px-8 py-3 text-[11px] sm:text-xs text-white/70">
+      <footer className="relative z-10 border-t border-white/15 bg-[#26040C]/45 backdrop-blur-xs px-4 sm:px-8 py-3 text-[11px] sm:text-xs text-white/80">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <div>
             &copy; {new Date().getFullYear()} {companyName} &middot; ISO Audit Management System
           </div>
-          <div className="text-white/80 font-medium">
+          <div className="text-white/90 font-medium">
             Information Technology Services Department 2026
           </div>
         </div>
@@ -335,7 +345,7 @@ export function LoginPage({
       {/* Sign-In Modal */}
       {loginOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#23060E]/75 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#23060E]/60 backdrop-blur-[2px] p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="login-modal-title"
