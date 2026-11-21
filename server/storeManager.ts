@@ -159,6 +159,15 @@ export async function syncDataBetweenStores(
         summary.comments++;
       }
     }
+
+    const srcActivities = await source.listCarActivities(c.CARNo);
+    const tgtActivities = await target.listCarActivities(c.CARNo);
+    const tgtActivityIds = new Set(tgtActivities.map((a) => a.ActivityID));
+    for (const act of srcActivities) {
+      if (!tgtActivityIds.has(act.ActivityID)) {
+        await target.addCarActivity(act);
+      }
+    }
   }
 
   // Announcements

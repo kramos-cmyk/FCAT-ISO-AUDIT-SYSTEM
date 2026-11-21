@@ -18,6 +18,7 @@ export const SHEETS = {
   HELPDESK_MESSAGES: 'HelpDesk_Messages',
   DIRECT_MESSAGES: 'Direct_Messages',
   AUDIT_SCHEDULES: 'Audit_Schedules',
+  CAR_ACTIVITIES: 'CAR_Activities',
 } as const;
 
 export const DEFAULT_DEPARTMENTS: string[] = [
@@ -122,6 +123,7 @@ export const COMPANY_COLS = ['Key', 'Value'];
 export const SETTINGS_COLS = ['Key', 'Value'];
 export const LOG_COLS = ['Timestamp', 'UserID', 'Action', 'Details'];
 export const COMMENT_COLS = ['CommentID', 'CARNo', 'UserID', 'UserName', 'Role', 'Message', 'CreatedAt'];
+export const CAR_ACTIVITY_COLS = ['ActivityID', 'CARNo', 'UserID', 'UserName', 'Role', 'ActivityType', 'Summary', 'Details', 'CreatedAt'];
 export const ANNOUNCEMENT_COLS = ['AnnouncementID', 'Title', 'Message', 'PostedBy', 'PostedByName', 'CreatedAt', 'UpdatedAt', 'ImageLinks'];
 export const ANNOUNCEMENT_HISTORY_COLS = ['HistoryID', 'AnnouncementID', 'Title', 'Message', 'ImageLinks', 'EditedBy', 'EditedByName', 'EditedAt'];
 export const ANNOUNCEMENT_COMMENT_COLS = ['CommentID', 'AnnouncementID', 'UserID', 'UserName', 'Role', 'Message', 'CreatedAt'];

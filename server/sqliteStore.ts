@@ -16,6 +16,7 @@ import type {
   AnnouncementRecord,
   AuditLogEntry,
   AuditSchedule,
+  CarActivityEntry,
   CarComment,
   CarRecord,
   DataStore,
@@ -157,6 +158,19 @@ export class SqliteStore implements DataStore {
         CreatedAt TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_car_comments_car ON car_comments(CARNo, CreatedAt);
+
+      CREATE TABLE IF NOT EXISTS car_activities (
+        ActivityID TEXT PRIMARY KEY,
+        CARNo TEXT NOT NULL,
+        UserID TEXT NOT NULL,
+        UserName TEXT NOT NULL,
+        Role TEXT NOT NULL,
+        ActivityType TEXT NOT NULL,
+        Summary TEXT NOT NULL,
+        Details TEXT DEFAULT '',
+        CreatedAt TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_car_activities_car ON car_activities(CARNo, CreatedAt);
 
       CREATE TABLE IF NOT EXISTS announcements (
         AnnouncementID TEXT PRIMARY KEY,
@@ -519,6 +533,22 @@ export class SqliteStore implements DataStore {
          VALUES (@CommentID, @CARNo, @UserID, @UserName, @Role, @Message, @CreatedAt)`
       )
       .run(comment);
+  }
+
+  // ---- CAR Activity Log ----
+  async listCarActivities(carNo: string): Promise<CarActivityEntry[]> {
+    return this.db
+      .prepare('SELECT * FROM car_activities WHERE CARNo = ? ORDER BY CreatedAt DESC')
+      .all(carNo) as CarActivityEntry[];
+  }
+
+  async addCarActivity(entry: CarActivityEntry): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO car_activities (ActivityID, CARNo, UserID, UserName, Role, ActivityType, Summary, Details, CreatedAt)
+         VALUES (@ActivityID, @CARNo, @UserID, @UserName, @Role, @ActivityType, @Summary, @Details, @CreatedAt)`
+      )
+      .run({ ...entry, Details: entry.Details || '' });
   }
 
   // ---- Notifications ----

@@ -5,6 +5,7 @@ import {
   ANNOUNCEMENT_COMMENT_COLS,
   ANNOUNCEMENT_HISTORY_COLS,
   AUDIT_SCHEDULE_COLS,
+  CAR_ACTIVITY_COLS,
   CAR_COLS,
   COMMENT_COLS,
   COMPANY_COLS,
@@ -30,6 +31,7 @@ import type {
   AnnouncementRecord,
   AuditLogEntry,
   AuditSchedule,
+  CarActivityEntry,
   CarComment,
   CarRecord,
   DataStore,
@@ -174,6 +176,7 @@ export class GoogleSheetsStore implements DataStore {
     await this.ensureTab(SHEETS.HELPDESK_MESSAGES, HELPDESK_MESSAGE_COLS);
     await this.ensureTab(SHEETS.DIRECT_MESSAGES, DIRECT_MESSAGE_COLS);
     await this.ensureTab(SHEETS.AUDIT_SCHEDULES, AUDIT_SCHEDULE_COLS);
+    await this.ensureTab(SHEETS.CAR_ACTIVITIES, CAR_ACTIVITY_COLS);
 
     const deptRows = await this.getRowsRaw(SHEETS.DEPARTMENTS, true);
     const existingDepts = deptRows.slice(1).map((r) => String(r[0] || '').trim()).filter(Boolean);
@@ -503,6 +506,23 @@ export class GoogleSheetsStore implements DataStore {
 
   async addCarComment(comment: CarComment): Promise<void> {
     await this.appendRow(SHEETS.COMMENTS, COMMENT_COLS, comment as unknown as Record<string, unknown>);
+  }
+
+  // ---- CAR Activity Log ----
+  async listCarActivities(carNo: string): Promise<CarActivityEntry[]> {
+    const rows = await this.getObjects<CarActivityEntry>(SHEETS.CAR_ACTIVITIES, CAR_ACTIVITY_COLS);
+    return rows
+      .filter((a) => a.CARNo === carNo)
+      .map(({ _row, ...a }) => a)
+      .sort((a, b) => new Date(b.CreatedAt).getTime() - new Date(a.CreatedAt).getTime());
+  }
+
+  async addCarActivity(entry: CarActivityEntry): Promise<void> {
+    await this.appendRow(
+      SHEETS.CAR_ACTIVITIES,
+      CAR_ACTIVITY_COLS,
+      entry as unknown as Record<string, unknown>
+    );
   }
 
   // ---- Notifications ----

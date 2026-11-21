@@ -47,6 +47,8 @@ import type {
   AuditSchedule,
   AuditScheduleStatus,
   AuditScheduleType,
+  CarActivityEntry,
+  CarActivityType,
   CarRecord,
   DirectMessage,
   HelpDeskMessage,
@@ -197,6 +199,97 @@ async function canAuditorManageCar(user: SessionUser, rec: CarRecord): Promise<b
     email: freshUser?.Email || user.email,
   };
   return isCarRaisedByUser(rec, info);
+}
+
+function extractEvidenceUrls(rec: Partial<CarRecord>): string[] {
+  const fromArray = parseJsonArray<string>(rec.EvidenceLinks);
+  const combined = [...fromArray, rec.EvidenceLink || '', rec.FormEvidenceLink || ''];
+  return Array.from(new Set(combined.map((u) => String(u || '').trim()).filter((u) => isValidEvidenceUrl(u))));
+}
+
+function shortEvidenceName(url: string): string {
+  try {
+    const clean = url.split('?')[0];
+    const parts = clean.split('/').filter(Boolean);
+    const last = parts[parts.length - 1];
+    if (last) {
+      const decoded = decodeURIComponent(last);
+      const stripped = decoded.replace(/^[A-Za-z0-9._-]+_\d{10,14}_/, '');
+      return stripped || decoded;
+    }
+  } catch {
+    // ignore decode error
+  }
+  return url;
+}
+
+function detectCarSectionChanges(prev: CarRecord, next: CarRecord, whyChanged: boolean): string[] {
+  const changed: string[] = [];
+  const diffAny = (keys: Array<keyof CarRecord>) =>
+    keys.some((k) => String(prev[k] || '') !== String(next[k] || ''));
+
+  if (diffAny(['Type', 'Department', 'DateIssued', 'Source', 'ISOClause', 'CompanyDocument', 'Details'])) {
+    changed.push('Finding Details');
+  }
+  if (diffAny(['Correction', 'DateCompleted', 'PersonInCharge', 'Result', 'CorrectionEntries'])) {
+    changed.push('Correction');
+  }
+  if (whyChanged) {
+    changed.push('5-Why Analysis');
+  }
+  if (
+    diffAny([
+      'PossibleRootCause',
+      'PossibleRootCauseEntries',
+      'ValidationMethod',
+      'ValidationDate',
+      'ValidationResult',
+      'TrueRootCause',
+    ])
+  ) {
+    changed.push('Root Cause & Validation');
+  }
+  if (diffAny(['CorrectiveAction', 'ActionOwnerTargetDate', 'DateImplemented', 'CorrectiveActionEntries'])) {
+    changed.push('Corrective Action Plan');
+  }
+  if (
+    diffAny([
+      'PreparedBy',
+      'PreparedDate',
+      'ApprovedBy',
+      'ApprovedDate',
+      'SignOffConformedBy',
+      'SignOffConformedDate',
+    ])
+  ) {
+    changed.push('Sign-offs');
+  }
+  return changed;
+}
+
+async function recordCarActivity(
+  actor: { userId: string; name: string; role: string },
+  carNo: string,
+  activityType: CarActivityType,
+  summary: string,
+  details = '',
+  createdAt = nowIso()
+): Promise<void> {
+  try {
+    await getStore().addCarActivity({
+      ActivityID: newId('ACT'),
+      CARNo: carNo,
+      UserID: actor.userId,
+      UserName: actor.name,
+      Role: actor.role,
+      ActivityType: activityType,
+      Summary: summary,
+      Details: details,
+      CreatedAt: createdAt,
+    });
+  } catch (err) {
+    console.error('[ActivityLog] Failed to record activity:', err instanceof Error ? err.message : err);
+  }
 }
 
 async function dispatchNotificationEmail(notif: NotificationRecord): Promise<void> {
@@ -1074,6 +1167,26 @@ export function createApiRouter(): express.Router {
 
       await store.createCAR(record, whyFactors);
 
+      await recordCarActivity(
+        req.user!,
+        carNo,
+        'created',
+        `Raised new ${record.Type || 'CAR'} for ${record.Department || 'department'}`,
+        `Assigned to: ${record.EmployeeName}${record.AdminDeadline ? ` · Deadline: ${record.AdminDeadline}` : ''}`,
+        now
+      );
+      const initialEv = extractEvidenceUrls(record);
+      if (initialEv.length > 0) {
+        await recordCarActivity(
+          req.user!,
+          carNo,
+          'evidence',
+          `Attached ${initialEv.length} evidence file${initialEv.length === 1 ? '' : 's'}`,
+          `Added: ${initialEv.map(shortEvidenceName).join(', ')}`,
+          now
+        );
+      }
+
       const raiseMessage = `A new ${record.Type || 'finding'} (${carNo}) has been raised for your department: ${(record.Details || '').slice(0, 120)}`;
       if (record.EmployeeID) {
         await createAndPushNotification({
@@ -1190,7 +1303,85 @@ export function createApiRouter(): express.Router {
         updates.EmployeeName = req.user!.name;
       }
 
+      const beforeEv = extractEvidenceUrls(rec);
+      const beforeWhy = whyFactors ? await store.getWhyWhy(carNo) : null;
+
       await store.updateCAR(carNo, updates, whyFactors);
+
+      const actionNow = nowIso();
+      if (!isAdmin && rec.AdminFlag === 'Needs Attention') {
+        await recordCarActivity(
+          req.user!,
+          carNo,
+          'status',
+          "Resubmitted by Process Owner (cleared 'Needs Attention' flag)",
+          rec.AdminNote ? `Previous flag note: ${rec.AdminNote}` : '',
+          actionNow
+        );
+      }
+      if (reassignedService) {
+        await recordCarActivity(
+          req.user!,
+          carNo,
+          'assignment',
+          `Assigned CAR to ${reassignedService}`,
+          `Previous assignee: ${rec.EmployeeName || '(Unassigned)'}`,
+          actionNow
+        );
+      } else if (reassignedTo?.EmployeeID) {
+        await recordCarActivity(
+          req.user!,
+          carNo,
+          'assignment',
+          `Assigned CAR to ${reassignedTo.EmployeeName || reassignedTo.EmployeeID}`,
+          `Previous assignee: ${rec.EmployeeName || '(Unassigned)'}`,
+          actionNow
+        );
+      } else if (updates.EmployeeID && updates.EmployeeName) {
+        await recordCarActivity(
+          req.user!,
+          carNo,
+          'assignment',
+          `Process owner claimed CAR: ${updates.EmployeeName}`,
+          '',
+          actionNow
+        );
+      }
+
+      const nextRecord = { ...rec, ...updates } as CarRecord;
+      const afterEv = extractEvidenceUrls(nextRecord);
+      const addedEv = afterEv.filter((u) => !beforeEv.includes(u));
+      const removedEv = beforeEv.filter((u) => !afterEv.includes(u));
+      if (addedEv.length > 0 || removedEv.length > 0) {
+        let evSummary = 'Updated evidence files';
+        if (addedEv.length > 0 && removedEv.length === 0) {
+          evSummary = `Added ${addedEv.length} evidence file${addedEv.length === 1 ? '' : 's'}`;
+        } else if (removedEv.length > 0 && addedEv.length === 0) {
+          evSummary = `Removed ${removedEv.length} evidence file${removedEv.length === 1 ? '' : 's'}`;
+        } else {
+          evSummary = `Updated evidence (+${addedEv.length} added, -${removedEv.length} removed)`;
+        }
+        const evDetails = [
+          addedEv.length > 0 ? `Added: ${addedEv.map(shortEvidenceName).join(', ')}` : '',
+          removedEv.length > 0 ? `Removed: ${removedEv.map(shortEvidenceName).join(', ')}` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        await recordCarActivity(req.user!, carNo, 'evidence', evSummary, evDetails, actionNow);
+      }
+
+      const whyChanged = Boolean(whyFactors && beforeWhy && JSON.stringify(whyFactors) !== JSON.stringify(beforeWhy));
+      const changedSections = detectCarSectionChanges(rec, nextRecord, whyChanged);
+      if (changedSections.length > 0) {
+        await recordCarActivity(
+          req.user!,
+          carNo,
+          isAdmin ? 'auditor_update' : 'owner_update',
+          `${isAdmin ? 'Updated' : 'Submitted/updated'} ${changedSections.join(', ')}`,
+          rec.Department ? `Department: ${rec.Department}` : '',
+          actionNow
+        );
+      }
 
       if (reassignedService) {
         await notifyDepartment(
@@ -1251,6 +1442,7 @@ export function createApiRouter(): express.Router {
         return;
       }
       await store.updateCAR(carNo, { AdminFlag: 'Needs Attention', AdminNote: note, UpdatedAt: nowIso() });
+      await recordCarActivity(req.user!, carNo, 'flag', "Flagged as 'Needs Attention'", note);
       const msg = `Your record ${carNo} needs attention: ${note}`;
       if (rec.EmployeeID) {
         await createAndPushNotification({
@@ -1287,6 +1479,12 @@ export function createApiRouter(): express.Router {
       }
       const ok = await store.updateCAR(carNo, { Status: 'Closed', UpdatedAt: nowIso() });
       if (ok) {
+        await recordCarActivity(
+          req.user!,
+          carNo,
+          'status',
+          `Status changed from ${rec.Status || 'Open'} to Closed`
+        );
         if (rec) {
           await notifyCarTarget(
             req.user!.userId,
@@ -1321,6 +1519,12 @@ export function createApiRouter(): express.Router {
         res.json({ ok: false, error: 'Record not found.' });
         return;
       }
+      await recordCarActivity(
+        req.user!,
+        carNo,
+        'status',
+        `Status changed from ${rec.Status || 'Closed'} to Open (Reopened)`
+      );
       if (rec) {
         await notifyCarTarget(
           req.user!.userId,
@@ -1351,6 +1555,13 @@ export function createApiRouter(): express.Router {
         return;
       }
       await store.updateCAR(carNo, { AdminDeadline: deadline, UpdatedAt: nowIso() });
+      await recordCarActivity(
+        req.user!,
+        carNo,
+        'deadline',
+        deadline ? `Deadline set to ${deadline}` : 'Deadline cleared',
+        `Previous deadline: ${rec.AdminDeadline || 'None'}`
+      );
       if (deadline) {
         const msg = `A deadline of ${deadline} has been set for your record ${carNo}.`;
         if (rec.EmployeeID) {
@@ -1402,15 +1613,24 @@ export function createApiRouter(): express.Router {
         return;
       }
       const entries = parseJsonArray<Record<string, string>>(rec.FollowUpEntries);
+      const createdAt = nowIso();
       entries.push({
         FollowUpDate,
         ResultOfVerification,
         VerifiedBy,
         ConformedBy,
         AddedBy: req.user!.name,
-        CreatedAt: nowIso(),
+        CreatedAt: createdAt,
       });
       await store.updateCAR(carNo, { FollowUpEntries: JSON.stringify(entries), UpdatedAt: nowIso() });
+      await recordCarActivity(
+        req.user!,
+        carNo,
+        'followup',
+        `Added verification follow-up (${FollowUpDate})`,
+        `Verified by ${VerifiedBy}: ${ResultOfVerification}${ConformedBy ? ` · Conformed by ${ConformedBy}` : ''}`,
+        createdAt
+      );
       await notifyCarTarget(
         req.user!.userId,
         rec,
@@ -1421,6 +1641,150 @@ export function createApiRouter(): express.Router {
       res.json({ ok: true, entries });
     } catch (err) {
       res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to add follow-up.' });
+    }
+  });
+
+  // ---- CAR ACTIVITY LOG ----
+  router.get('/cars/:carNo/activity', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const { carNo } = req.params;
+      const store = getStore();
+      const rec = await store.getCAR(carNo);
+      if (!rec) {
+        res.json([]);
+        return;
+      }
+      if (!(await canUserViewCar(req.user!, rec))) {
+        res.status(403).json({ ok: false, error: 'NOT_AUTHORIZED' });
+        return;
+      }
+      const stored = await store.listCarActivities(carNo);
+      const activities: CarActivityEntry[] = [...stored];
+
+      const hasCreated = activities.some((a) => a.ActivityType === 'created');
+      if (!hasCreated) {
+        const [users, comments, logs] = await Promise.all([
+          store.listUsers(),
+          store.listCarComments(carNo),
+          store.listLogs(500),
+        ]);
+        const userMap = new Map(users.map((u) => [u.UserID, u]));
+        const hasNear = (type: CarActivityType, ts: string) => {
+          const target = Date.parse(ts);
+          return activities.some(
+            (a) =>
+              a.ActivityType === type &&
+              (!Number.isNaN(target) && !Number.isNaN(Date.parse(a.CreatedAt))
+                ? Math.abs(Date.parse(a.CreatedAt) - target) < 5000
+                : a.CreatedAt === ts)
+          );
+        };
+
+        if (rec.CreatedAt) {
+          activities.push({
+            ActivityID: `LEG-CREATE-${carNo}`,
+            CARNo: carNo,
+            UserID: '',
+            UserName: rec.RaisedBy || 'Auditor',
+            Role: 'Auditor',
+            ActivityType: 'created',
+            Summary: `Raised ${rec.Type || 'CAR'} for ${rec.Department || 'department'}`,
+            Details: rec.EmployeeName ? `Assigned to: ${rec.EmployeeName}` : '',
+            CreatedAt: rec.CreatedAt,
+          });
+        }
+
+        for (const c of comments) {
+          if (!hasNear('comment', c.CreatedAt)) {
+            activities.push({
+              ActivityID: `LEG-CMT-${c.CommentID}`,
+              CARNo: carNo,
+              UserID: c.UserID,
+              UserName: c.UserName,
+              Role: c.Role,
+              ActivityType: 'comment',
+              Summary: 'Posted a comment',
+              Details: c.Message,
+              CreatedAt: c.CreatedAt,
+            });
+          }
+        }
+
+        const followUps = parseJsonArray<Record<string, string>>(rec.FollowUpEntries);
+        followUps.forEach((f, idx) => {
+          const ts = f.CreatedAt || (f.FollowUpDate ? `${f.FollowUpDate}T00:00:00.000Z` : '');
+          if (ts && !hasNear('followup', ts)) {
+            activities.push({
+              ActivityID: `LEG-FU-${carNo}-${idx}`,
+              CARNo: carNo,
+              UserID: '',
+              UserName: f.AddedBy || f.VerifiedBy || 'Auditor',
+              Role: 'Auditor',
+              ActivityType: 'followup',
+              Summary: `Added verification follow-up (${f.FollowUpDate || '—'})`,
+              Details: `Verified by ${f.VerifiedBy || '—'}: ${f.ResultOfVerification || ''}`,
+              CreatedAt: ts,
+            });
+          }
+        });
+
+        logs.forEach((log, idx) => {
+          const details = String(log.Details || '');
+          const isCarMatch =
+            details === carNo ||
+            details.startsWith(`${carNo} `) ||
+            (log.Action === 'UPLOAD_EVIDENCE' && details.includes(`/${carNo}_`));
+          if (!isCarMatch) return;
+
+          const actor = userMap.get(log.UserID);
+          const actorName = actor?.Name || log.UserID || 'System';
+          const actorRole = actor ? normalizeUserRole(actor.Role) : 'Auditor';
+
+          let type: CarActivityType | null = null;
+          let summary = '';
+          let entryDetails = '';
+          if (log.Action === 'FLAG_CAR') {
+            type = 'flag';
+            summary = "Flagged as 'Needs Attention'";
+          } else if (log.Action === 'CLOSE_CAR') {
+            type = 'status';
+            summary = 'Closed CAR';
+          } else if (log.Action === 'REOPEN_CAR') {
+            type = 'status';
+            summary = 'Reopened CAR';
+          } else if (log.Action === 'SET_DEADLINE') {
+            type = 'deadline';
+            const dl = details.includes('->') ? details.split('->').slice(1).join('->').trim() : '';
+            summary = dl ? `Deadline set to ${dl}` : 'Deadline updated';
+          } else if (log.Action === 'UPLOAD_EVIDENCE') {
+            type = 'evidence';
+            summary = 'Uploaded evidence file';
+            entryDetails = shortEvidenceName(details);
+          } else if (log.Action === 'UPDATE_CAR') {
+            type = isProcessOwner(actorRole) && !isSystemAdmin(actorRole) ? 'owner_update' : 'auditor_update';
+            summary = 'Updated CAR record';
+          }
+
+          if (type && !hasNear(type, log.Timestamp)) {
+            activities.push({
+              ActivityID: `LEG-LOG-${idx}-${log.Timestamp}`,
+              CARNo: carNo,
+              UserID: log.UserID,
+              UserName: actorName,
+              Role: actorRole,
+              ActivityType: type,
+              Summary: summary,
+              Details: entryDetails,
+              CreatedAt: log.Timestamp,
+            });
+          }
+        });
+      }
+
+      activities.sort((a, b) => String(b.CreatedAt || '').localeCompare(String(a.CreatedAt || '')));
+      res.json(activities);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load activity log.' });
     }
   });
 
@@ -1443,7 +1807,7 @@ export function createApiRouter(): express.Router {
     }
   });
 
-  router.post('/cars/:carNo/comments', requireAuditor, async (req: AuthedRequest, res) => {
+  router.post('/cars/:carNo/comments', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { carNo } = req.params;
       const msg = String(req.body?.message || '').trim();
@@ -1457,10 +1821,15 @@ export function createApiRouter(): express.Router {
         res.json({ ok: false, error: 'Record not found.' });
         return;
       }
-      if (!(await canAuditorManageCar(req.user!, rec))) {
-        res.status(403).json({ ok: false, error: 'Only the Administrator or the Auditor who raised this finding can post comments.' });
+      const freshUser = await store.findUserById(req.user!.userId);
+      const userDept = freshUser ? freshUser.Department : req.user!.department;
+      const canManageAsAuditor = await canAuditorManageCar(req.user!, rec);
+      const isAuthorizedOwner = isProcessOwner(req.user!.role) && userCanAccessCar(req.user!.userId, userDept, rec);
+      if (!canManageAsAuditor && !isAuthorizedOwner) {
+        res.status(403).json({ ok: false, error: 'You are not authorized to comment on this record.' });
         return;
       }
+      const createdAt = nowIso();
       const comment = {
         CommentID: newId('CM'),
         CARNo: carNo,
@@ -1468,22 +1837,25 @@ export function createApiRouter(): express.Router {
         UserName: req.user!.name,
         Role: req.user!.role,
         Message: msg,
-        CreatedAt: nowIso(),
+        CreatedAt: createdAt,
       };
       await store.addCarComment(comment);
-      const notifyMsg = `New comment on your record ${carNo}: ${msg}`;
-      if (rec.EmployeeID) {
-        await createAndPushNotification({
-          NotificationID: newId('N'),
-          ToUserID: rec.EmployeeID,
-          FromUserID: req.user!.userId,
-          Message: notifyMsg,
-          RelatedCARNo: carNo,
-          Read: false,
-          CreatedAt: nowIso(),
-        });
+      await recordCarActivity(req.user!, carNo, 'comment', 'Posted a comment', msg, createdAt);
+
+      if (canManageAsAuditor && !(isAuthorizedOwner && !isSystemAdmin(req.user!.role) && !isCarRaisedByUser(rec, {
+        userId: req.user!.userId,
+        name: freshUser?.Name || req.user!.name,
+        email: freshUser?.Email || req.user!.email,
+      }))) {
+        const notifyMsg = `New comment on your record ${carNo}: ${msg}`;
+        await notifyCarTarget(req.user!.userId, rec, notifyMsg, carNo);
       } else {
-        await notifyDepartment(req.user!.userId, [rec.Department, rec.EmployeeName], notifyMsg, carNo);
+        await notifyAuditors(
+          req.user!.userId,
+          `${req.user!.name} (${rec.Department || 'Process Owner'}) commented on CAR ${carNo}: ${msg}`,
+          carNo,
+          rec
+        );
       }
       await store.appendLog({ Timestamp: nowIso(), UserID: req.user!.userId, Action: 'ADD_COMMENT', Details: carNo });
       res.json({ ok: true, comment });

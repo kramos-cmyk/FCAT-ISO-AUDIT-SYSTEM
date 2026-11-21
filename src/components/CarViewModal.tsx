@@ -1,5 +1,23 @@
-import React, { useEffect, useState } from 'react';
-import { Check, Download, ExternalLink, Send, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  CalendarClock,
+  Check,
+  CheckCircle2,
+  ClipboardCheck,
+  Download,
+  ExternalLink,
+  FileCheck2,
+  FileText,
+  Flag,
+  History,
+  MessageSquare,
+  Paperclip,
+  Pencil,
+  PlusCircle,
+  Send,
+  UserCheck,
+  X,
+} from 'lucide-react';
 import { api } from '../lib/api';
 import {
   correctiveActionsOf,
@@ -10,15 +28,108 @@ import {
   followUpsOf,
   isAuditorRole,
   isCarRaisedByUser,
+  isProcessOwnerRole,
   isRecordOverdue,
   isSystemAdminRole,
   possibleRootCausesOf,
+  roleLabel,
   safeUrl,
 } from '../lib/format';
-import type { CarComment, CarRecord, SessionUser } from '../lib/types';
+import type { CarActivityEntry, CarActivityType, CarComment, CarRecord, SessionUser } from '../lib/types';
 import { OfficialCarHeader } from './BrandCrest';
 import { StatusLabel } from './StatusLabel';
 import { useToast } from './Toast';
+
+type ActivityFilter = 'all' | 'status' | 'evidence' | 'comment' | 'edits';
+
+function activityVisualMeta(type: CarActivityType): {
+  label: string;
+  badgeClass: string;
+  nodeClass: string;
+  Icon: React.ComponentType<{ className?: string }>;
+} {
+  switch (type) {
+    case 'created':
+      return {
+        label: 'CAR Raised',
+        badgeClass: 'bg-[#F5E6E8] text-[#6B1A25] border-[#EAD9D4]',
+        nodeClass: 'bg-[#6B1A25] text-white border-[#6B1A25]',
+        Icon: PlusCircle,
+      };
+    case 'status':
+      return {
+        label: 'Status Change',
+        badgeClass: 'bg-[#E9F5EC] text-[#255A2D] border-[#C6E3CC]',
+        nodeClass: 'bg-[#2F6D39] text-white border-[#2F6D39]',
+        Icon: CheckCircle2,
+      };
+    case 'flag':
+      return {
+        label: 'Flagged',
+        badgeClass: 'bg-[#FBF0D6] text-[#7A5900] border-[#E7CF86]',
+        nodeClass: 'bg-[#C98A00] text-white border-[#C98A00]',
+        Icon: Flag,
+      };
+    case 'deadline':
+      return {
+        label: 'Deadline',
+        badgeClass: 'bg-[#F2EDF9] text-[#5B3B8C] border-[#DCD0F0]',
+        nodeClass: 'bg-[#6D47A6] text-white border-[#6D47A6]',
+        Icon: CalendarClock,
+      };
+    case 'evidence':
+      return {
+        label: 'Evidence Update',
+        badgeClass: 'bg-[#EBF3FE] text-[#1D4ED8] border-[#C6DCFD]',
+        nodeClass: 'bg-[#1D4ED8] text-white border-[#1D4ED8]',
+        Icon: Paperclip,
+      };
+    case 'comment':
+      return {
+        label: 'Comment',
+        badgeClass: 'bg-[#EEF2FF] text-[#3730A3] border-[#C7D2FE]',
+        nodeClass: 'bg-[#4338CA] text-white border-[#4338CA]',
+        Icon: MessageSquare,
+      };
+    case 'followup':
+      return {
+        label: 'Verification Follow-up',
+        badgeClass: 'bg-[#E6F7F5] text-[#0F5F56] border-[#BCE6E0]',
+        nodeClass: 'bg-[#0F766E] text-white border-[#0F766E]',
+        Icon: ClipboardCheck,
+      };
+    case 'owner_update':
+      return {
+        label: 'Process Owner Update',
+        badgeClass: 'bg-[#FFF4E5] text-[#8C4A00] border-[#F4D5A6]',
+        nodeClass: 'bg-[#B45309] text-white border-[#B45309]',
+        Icon: Pencil,
+      };
+    case 'auditor_update':
+      return {
+        label: 'Auditor Update',
+        badgeClass: 'bg-[#F7EBED] text-[#4A1219] border-[#E2C5C9]',
+        nodeClass: 'bg-[#882130] text-white border-[#882130]',
+        Icon: FileCheck2,
+      };
+    case 'assignment':
+    default:
+      return {
+        label: 'Assignment',
+        badgeClass: 'bg-[#F3F4F6] text-[#374151] border-[#D1D5DB]',
+        nodeClass: 'bg-[#4B5563] text-white border-[#4B5563]',
+        Icon: UserCheck,
+      };
+  }
+}
+
+function matchesActivityFilter(type: CarActivityType, filter: ActivityFilter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'status') return type === 'created' || type === 'status' || type === 'flag' || type === 'deadline';
+  if (filter === 'evidence') return type === 'evidence';
+  if (filter === 'comment') return type === 'comment';
+  return type === 'owner_update' || type === 'auditor_update' || type === 'followup' || type === 'assignment';
+}
 
 const WHY_FACTORS = ['Man', 'Method', 'Machine', 'Material', 'Environment'] as const;
 
@@ -62,15 +173,20 @@ export function CarViewModal({
   user,
   company,
   onClose,
+  initialTab = 'document',
 }: {
   carNo: string | null;
   user: SessionUser;
   company: Record<string, string>;
   onClose: () => void;
+  initialTab?: 'document' | 'activity';
 }) {
   const { showToast } = useToast();
   const [record, setRecord] = useState<CarRecord | null>(null);
   const [comments, setComments] = useState<CarComment[]>([]);
+  const [activities, setActivities] = useState<CarActivityEntry[]>([]);
+  const [activeTab, setActiveTab] = useState<'document' | 'activity'>(initialTab);
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all');
   const [loading, setLoading] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [posting, setPosting] = useState(false);
@@ -79,14 +195,18 @@ export function CarViewModal({
   useEffect(() => {
     if (!carNo) return;
     let cancelled = false;
+    setActiveTab(initialTab);
+    setActivityFilter('all');
     setLoading(true);
     setRecord(null);
     setComments([]);
-    Promise.all([api.getCAR(carNo), api.getCarComments(carNo)])
-      .then(([rec, cmts]) => {
+    setActivities([]);
+    Promise.all([api.getCAR(carNo), api.getCarComments(carNo), api.getCarActivities(carNo)])
+      .then(([rec, cmts, acts]) => {
         if (cancelled) return;
         setRecord(rec);
         setComments(cmts || []);
+        setActivities(acts || []);
       })
       .catch((err) => {
         if (!cancelled) showToast(err.message || 'Could not load record.', 'error');
@@ -97,7 +217,22 @@ export function CarViewModal({
     return () => {
       cancelled = true;
     };
-  }, [carNo, showToast]);
+  }, [carNo, initialTab, showToast]);
+
+  const activityCounts = useMemo(() => {
+    return {
+      all: activities.length,
+      status: activities.filter((a) => matchesActivityFilter(a.ActivityType, 'status')).length,
+      evidence: activities.filter((a) => matchesActivityFilter(a.ActivityType, 'evidence')).length,
+      comment: activities.filter((a) => matchesActivityFilter(a.ActivityType, 'comment')).length,
+      edits: activities.filter((a) => matchesActivityFilter(a.ActivityType, 'edits')).length,
+    };
+  }, [activities]);
+
+  const filteredActivities = useMemo(
+    () => activities.filter((a) => matchesActivityFilter(a.ActivityType, activityFilter)),
+    [activities, activityFilter]
+  );
 
   if (!carNo) return null;
 
@@ -110,7 +245,22 @@ export function CarViewModal({
     try {
       const res = await api.addCarComment(carNo, commentText.trim());
       if (res.ok && res.comment) {
-        setComments((prev) => [...prev, res.comment!]);
+        const posted = res.comment;
+        setComments((prev) => [...prev, posted]);
+        setActivities((prev) => [
+          {
+            ActivityID: `ACT-${posted.CommentID}`,
+            CARNo: carNo,
+            UserID: posted.UserID,
+            UserName: posted.UserName,
+            Role: posted.Role,
+            ActivityType: 'comment',
+            Summary: 'Posted a comment',
+            Details: posted.Message,
+            CreatedAt: posted.CreatedAt,
+          },
+          ...prev,
+        ]);
         setCommentText('');
         showToast('Comment posted.', 'success');
       } else {
@@ -231,7 +381,40 @@ export function CarViewModal({
           </div>
         </div>
 
-        {/* Scrollable 3-Page Compliance Document View */}
+        {/* Modal Sub-Bar Tabs */}
+        {record && (
+          <div className="flex items-center gap-1 px-5 bg-[#FAF7F5] border-b border-[#EAD9D4]">
+            <button
+              type="button"
+              onClick={() => setActiveTab('document')}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors cursor-pointer ${
+                activeTab === 'document'
+                  ? 'border-[#6B1A25] text-[#4A1219]'
+                  : 'border-transparent text-[#7A6F6F] hover:text-[#2B2323]'
+              }`}
+            >
+              <FileText className="h-4 w-4" />
+              FO-RI-05 Report
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('activity')}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 transition-colors cursor-pointer ${
+                activeTab === 'activity'
+                  ? 'border-[#6B1A25] text-[#4A1219]'
+                  : 'border-transparent text-[#7A6F6F] hover:text-[#2B2323]'
+              }`}
+            >
+              <History className="h-4 w-4" />
+              Activity Log
+              <span className="ml-0.5 inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[11px] font-mono-tabular bg-[#EFE5DF] text-[#4A1219]">
+                {activities.length}
+              </span>
+            </button>
+          </div>
+        )}
+
+        {/* Scrollable Content View */}
         <div className="overflow-y-auto p-3 sm:p-6 space-y-6 flex-1">
           {loading ? (
             <div className="bg-white rounded-xl py-14 text-center text-sm text-[#7A6F6F]">
@@ -240,6 +423,100 @@ export function CarViewModal({
           ) : !record ? (
             <div className="bg-white rounded-xl py-14 text-center text-sm text-[#7A6F6F]">
               Record not found.
+            </div>
+          ) : activeTab === 'activity' ? (
+            <div className="bg-white border border-[#EAD9D4] rounded-xl shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-[#EAD9D4] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-[#FCF9F7]">
+                <div>
+                  <h3 className="font-display font-bold text-base text-[#4A1219]">
+                    CAR Activity History
+                  </h3>
+                  <p className="text-xs text-[#7A6F6F] mt-0.5">
+                    Chronological audit trail of status changes, comments, evidence updates, and section edits for {record.CARNo}.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(
+                    [
+                      { id: 'all', label: 'All', count: activityCounts.all },
+                      { id: 'status', label: 'Status & Flags', count: activityCounts.status },
+                      { id: 'evidence', label: 'Evidence', count: activityCounts.evidence },
+                      { id: 'comment', label: 'Comments', count: activityCounts.comment },
+                      { id: 'edits', label: 'Edits & Follow-ups', count: activityCounts.edits },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActivityFilter(tab.id)}
+                      className={`px-2.5 py-1.5 rounded-md text-xs font-semibold border transition-colors cursor-pointer ${
+                        activityFilter === tab.id
+                          ? 'bg-[#6B1A25] text-white border-[#6B1A25]'
+                          : 'bg-white text-[#4A1219] border-[#EAD9D4] hover:border-[#6B1A25]'
+                      }`}
+                    >
+                      {tab.label}{' '}
+                      <span className="font-mono-tabular opacity-80">({tab.count})</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-5">
+                {filteredActivities.length === 0 ? (
+                  <div className="py-10 text-center text-sm text-[#7A6F6F]">
+                    No activity entries recorded for this filter yet.
+                  </div>
+                ) : (
+                  <ol className="relative border-l-2 border-[#EAD9D4] ml-3.5 space-y-5">
+                    {filteredActivities.map((entry) => {
+                      const meta = activityVisualMeta(entry.ActivityType);
+                      const Icon = meta.Icon;
+                      return (
+                        <li key={entry.ActivityID} className="pl-6 relative">
+                          <span
+                            className={`absolute -left-[13px] top-0.5 flex h-6 w-6 items-center justify-center rounded-full border shadow-xs ${meta.nodeClass}`}
+                          >
+                            <Icon className="h-3.5 w-3.5" />
+                          </span>
+                          <div className="rounded-lg border border-[#EFE5DF] bg-[#FCF9F7] px-4 py-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span
+                                  className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border ${meta.badgeClass}`}
+                                >
+                                  {meta.label}
+                                </span>
+                                <span className="text-sm font-semibold text-[#2B2323]">
+                                  {entry.Summary}
+                                </span>
+                              </div>
+                              <span className="text-xs text-[#7A6F6F] font-mono-tabular">
+                                {fmtDateTime(entry.CreatedAt)}
+                              </span>
+                            </div>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-[#5E5252]">
+                              <span className="font-semibold text-[#4A1219]">
+                                {entry.UserName || 'System'}
+                              </span>
+                              {entry.Role && (
+                                <span className="px-1.5 py-0.5 rounded bg-[#F3E8DE] text-[#4A1219] text-[11px] font-medium">
+                                  {roleLabel(entry.Role)}
+                                </span>
+                              )}
+                            </div>
+                            {entry.Details && (
+                              <div className="mt-2 rounded-md bg-white border border-[#EAD9D4] px-3 py-2 text-xs sm:text-sm text-[#2B2323] whitespace-pre-wrap break-words">
+                                {entry.Details}
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </div>
             </div>
           ) : (
             <>
@@ -771,9 +1048,9 @@ export function CarViewModal({
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-sm font-semibold text-[#2B2323]">
                               {c.UserName}
-                              {isAuditorRole(c.Role) && (
+                              {c.Role && (
                                 <span className="ml-2 text-[11px] font-semibold text-[#4A1219] bg-[#F3E8DE] px-2 py-0.5 rounded">
-                                  {c.Role === 'Admin' ? 'System Admin' : 'Auditor'}
+                                  {roleLabel(c.Role)}
                                 </span>
                               )}
                             </span>
@@ -787,13 +1064,19 @@ export function CarViewModal({
                     </div>
                   )}
 
-                  {(isSystemAdminRole(user.role) || (isAuditorRole(user.role) && isCarRaisedByUser(record, user))) && (
+                  {(isSystemAdminRole(user.role) ||
+                    (isAuditorRole(user.role) && isCarRaisedByUser(record, user)) ||
+                    isProcessOwnerRole(user.role)) && (
                     <div className="mt-4 pt-3 border-t border-[#EAD9D4]">
                       <textarea
                         rows={2}
                         value={commentText}
                         onChange={(e) => setCommentText(e.target.value)}
-                        placeholder="Add a comment for the department..."
+                        placeholder={
+                          isProcessOwnerRole(user.role) && !isAuditorRole(user.role)
+                            ? 'Add a comment or response note for the auditor...'
+                            : 'Add a comment for the department or auditor log...'
+                        }
                         className="w-full rounded-lg border border-[#EAD9D4] px-3 py-2 text-sm focus:outline-none focus:border-[#6B1A25]"
                       />
                       <button

@@ -6,6 +6,7 @@ import type {
   AuditSchedule,
   AuditScheduleStatus,
   AuditScheduleType,
+  CarActivityEntry,
   CarComment,
   CarRecord,
   DirectMessage,
@@ -206,6 +207,8 @@ export const api = {
     ),
   getCarComments: (carNo: string) =>
     request<CarComment[]>(`/cars/${encodeURIComponent(carNo)}/comments`),
+  getCarActivities: (carNo: string) =>
+    request<CarActivityEntry[]>(`/cars/${encodeURIComponent(carNo)}/activity`),
   addCarComment: (carNo: string, message: string) =>
     request<{ ok: boolean; comment?: CarComment; error?: string }>(
       `/cars/${encodeURIComponent(carNo)}/comments`,

@@ -101,6 +101,30 @@ export interface CarComment {
   CreatedAt: string;
 }
 
+export type CarActivityType =
+  | 'created'
+  | 'status'
+  | 'flag'
+  | 'deadline'
+  | 'evidence'
+  | 'comment'
+  | 'followup'
+  | 'owner_update'
+  | 'auditor_update'
+  | 'assignment';
+
+export interface CarActivityEntry {
+  ActivityID: string;
+  CARNo: string;
+  UserID: string;
+  UserName: string;
+  Role: string;
+  ActivityType: CarActivityType;
+  Summary: string;
+  Details: string;
+  CreatedAt: string;
+}
+
 export interface NotificationItem {
   NotificationID: string;
   ToUserID: string;

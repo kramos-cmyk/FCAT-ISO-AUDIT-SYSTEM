@@ -94,6 +94,30 @@ export interface CarComment {
   CreatedAt: string;
 }
 
+export type CarActivityType =
+  | 'created'
+  | 'status'
+  | 'flag'
+  | 'deadline'
+  | 'evidence'
+  | 'comment'
+  | 'followup'
+  | 'owner_update'
+  | 'auditor_update'
+  | 'assignment';
+
+export interface CarActivityEntry {
+  ActivityID: string;
+  CARNo: string;
+  UserID: string;
+  UserName: string;
+  Role: string;
+  ActivityType: CarActivityType;
+  Summary: string;
+  Details: string;
+  CreatedAt: string;
+}
+
 export interface AnnouncementRecord {
   AnnouncementID: string;
   Title: string;
@@ -219,9 +243,11 @@ export interface DataStore {
   updateCAR(carNo: string, updates: Partial<CarRecord>, whyFactors?: WhyWhyFactors): Promise<boolean>;
   getWhyWhy(carNo: string): Promise<WhyWhyFactors>;
 
-  // Comments
+  // Comments & Activity Log
   listCarComments(carNo: string): Promise<CarComment[]>;
   addCarComment(comment: CarComment): Promise<void>;
+  listCarActivities(carNo: string): Promise<CarActivityEntry[]>;
+  addCarActivity(entry: CarActivityEntry): Promise<void>;
 
   // Notifications
   listNotificationsForUser(userId: string): Promise<NotificationRecord[]>;
