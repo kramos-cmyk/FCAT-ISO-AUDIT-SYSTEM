@@ -15,7 +15,7 @@ import { safeUrl } from '../lib/format';
 import type { SessionUser } from '../lib/types';
 import { FCATLogo } from '../components/BrandCrest';
 import { PortalInfoModal, type PortalModalKind } from '../components/PortalInfoModals';
-import { OFFICIAL_WEBSITE_URL } from '../data/fcatPortalInfo';
+import { OFFICIAL_WEBSITE_URL } from '../lib/fcatPortalInfo';
 
 const OFFICIAL_SCHOOL_LOGO = '/fcat-logo.png';
 const LEGACY_DRIVE_LOGO_ID = '1AjBH5OjVr9uuo3Wlb7VywM7eAkXD7zlR';

@@ -39,7 +39,7 @@ import {
   TESDA_DIPLOMA_REQUIREMENTS,
   TESDA_SHORT_PROGRAMS,
   TESDA_SHORT_REQUIREMENTS,
-} from '../data/fcatPortalInfo';
+} from '../lib/fcatPortalInfo';
 
 export type PortalModalKind = 'programs' | 'scholarship' | 'about' | 'history';
 
